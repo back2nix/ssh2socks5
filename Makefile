@@ -40,7 +40,7 @@ build-android:
 	-target=android/$(ANDROID_ARCH) \
 	-androidapi $(ANDROID_API) \
 	-o $(ANDROID_DIR)/app/libs/proxy.aar \
-	./mobile
+	./mobile ./proxy
 
 	# Build Android APK
 	cd $(ANDROID_DIR) && ./gradlew build --no-daemon
@@ -68,3 +68,10 @@ run: build-go
 		-host=35.193.63.104 \
 		-user=bg \
 		-key=/home/bg/Documents/code/backup/.ssh/google-france-key
+
+
+log/crash:
+	adb logcat -b crash
+
+log/cat:
+	adb logcat | grep com.example.minimal
