@@ -1,10 +1,10 @@
-# Defining variables
 BINARY_NAME := ssh2socks5
 ANDROID_PKG := com.example.ssh2socks5
 ANDROID_API := 30
 ANDROID_ARCH := arm64
 GO_FILES := $(shell find . -name '*.go')
 ANDROID_DIR := android
+CMD_DIR := cmd/ssh2socks5
 
 .DEFAULT_GOAL := help
 
@@ -20,19 +20,12 @@ help:
 
 .PHONY: build-go
 build-go:
-	go build -tags='!android' -o $(BINARY_NAME) .
+	go build -tags='!android' -o bin/$(BINARY_NAME) ./$(CMD_DIR)
 
 .PHONY: build-android
 build-android:
-	# Clean Android build cache
-	# cd $(ANDROID_DIR) && ./gradlew clean --no-daemon
-	# rm -rf $(HOME)/.gradle/caches/
 	mkdir -p android/app/libs
-
-	# Initialize gomobile
 	gomobile init -v
-
-	# Build AAR file
 	GOPATH=$(HOME)/go \
 	GOCACHE=$(HOME)/.cache/go-build \
 	GOMODCACHE=$(HOME)/go/pkg/mod \
@@ -41,8 +34,6 @@ build-android:
 	-androidapi $(ANDROID_API) \
 	-o $(ANDROID_DIR)/app/libs/proxy.aar \
 	./mobile ./proxy
-
-	# Build Android APK
 	cd $(ANDROID_DIR) && ./gradlew build --no-daemon
 	cp $(ANDROID_DIR)/app/build/outputs/apk/debug/app-debug.apk ssh2socks5.apk
 
@@ -55,7 +46,7 @@ test:
 
 .PHONY: clean
 clean:
-	rm -f $(BINARY_NAME)
+	rm -f bin/$(BINARY_NAME)
 	rm -f ssh2socks5.apk
 	rm -rf $(ANDROID_DIR)/app/maven/proxy.aar
 	rm -rf $(ANDROID_DIR)/app/build
@@ -64,14 +55,15 @@ clean:
 
 .PHONY: run
 run: build-go
-	./$(BINARY_NAME) -lport=1081 \
+	./bin/$(BINARY_NAME) -lport=1081 \
 		-host=35.193.63.104 \
 		-user=bg \
 		-key=/home/bg/Documents/code/backup/.ssh/google-france-key
 
-
+.PHONY: log/crash
 log/crash:
 	adb logcat -b crash
 
+.PHONY: log/cat
 log/cat:
 	adb logcat | grep com.example.minimal

@@ -4,7 +4,7 @@ logs
 android/app/build/
 android/.gradle
 .gradle
-ssh2socks5
+bin
 android/app/libs
 android/app/maven
 *.apk
