@@ -1,3 +1,8 @@
 logs
 *.log
 .direnv
+android/app/build/
+android/.gradle
+.gradle
+ssh2socks5
+android/app/maven

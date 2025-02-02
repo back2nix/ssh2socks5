@@ -1,7 +1,7 @@
 {
-  description = "SSH to SOCKS5 proxy with Android support";
+  description = "Android development environment";
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/df27247e6f3e636c119e2610bf12d38b5e98cc79";
     nixpkgs-unstable.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
   };
@@ -15,16 +15,55 @@
         };
         overlays = final: prev: {
           unstable = pkgs-unstable;
-          androidPkgs = prev.androidenv.composeAndroidPackages {
-            toolsVersion = "26.1.1";
-            platformToolsVersion = "33.0.3";
-            buildToolsVersions = ["33.0.1" "34.0.0"];
-            platformVersions = ["33" "34"];
-            ndkVersions = [ "25.2.9519653" ];
-            includeNDK = true;
-            includeExtras = [ "extras;android;m2repository" ];
-            includeSources = true;
-          };
+          aapt2 = final.callPackage ({ lib, stdenv, fetchurl }:
+            let
+              inherit (lib) getAttr;
+              inherit (stdenv) isLinux isDarwin;
+              pname = "aapt2";
+              version = "8.1.1-10154469";
+              platform = if isLinux then "linux" else
+                        if isDarwin then "osx" else
+                        throw "Unknown platform!";
+            in stdenv.mkDerivation {
+              inherit pname version;
+              src = fetchurl {
+                url = "https://dl.google.com/dl/android/maven2/com/android/tools/build/aapt2/${version}/aapt2-${version}-${platform}.jar";
+                sha256 = getAttr platform {
+                  linux = "sha256-p54GGvEfAo0yk8euVO7QTu/c3zuityZhyGdhFSV6w+E=";
+                  osx = "sha256-bO4ljdUEfbuns7EyT1FKGLqNGz+0bms5XsplXvzD2T0=";
+                };
+              };
+              nativeBuildInputs = with final; [ autoPatchelfHook makeWrapper file ];
+              buildInputs = with final; [ unzip gcc-unwrapped stdenv.cc.cc.lib ];
+              dontUnpack = true;
+              installPhase = ''
+                mkdir -p $out/{bin,lib}
+                cp $src $out/lib/aapt2.jar
+                ${final.unzip}/bin/unzip $out/lib/aapt2.jar aapt2 -d $out/bin
+                chmod +x $out/bin/aapt2
+              '';
+            }
+          ) {};
+          androidEnvCustom = final.callPackage ({ androidenv }:
+            let
+              androidComposition = androidenv.composeAndroidPackages {
+                toolsVersion = "26.1.1";
+                platformToolsVersion = "35.0.1";
+                buildToolsVersions = [ "34.0.0" ];
+                includeNDK = true;
+                ndkVersion = "21.3.6528147";
+                platformVersions = [ "28" "29" "30" "33" "34" ];
+                includeSources = false;
+                includeSystemImages = false;
+                systemImageTypes = [ "default" ];
+                abiVersions = [ "armeabi-v7a" "arm64-v8a" ];
+              };
+            in {
+              pkgs = androidComposition;
+              compose = androidComposition;
+            }
+          ) {};
+          androidPkgs = final.androidEnvCustom.pkgs;
           gomobile = (prev.gomobile.overrideAttrs (old: {
             patches = [
               (final.fetchurl {
@@ -52,6 +91,7 @@
             android_sdk.accept_license = true;
           };
         };
+        ndkVersion = "21.3.6528147";
       in
       {
         devShells.default = pkgs.mkShell {
@@ -64,7 +104,6 @@
             androidPkgs.platforms
             unstable.gomobile
             clang
-
             which
             file
             procps
@@ -73,7 +112,6 @@
             gzip
             gnumake
             gcc
-
             zlib
             libGL
             libGLU
@@ -84,9 +122,9 @@
             xorg.libXi
             xorg.libXcursor
             xorg.libXfixes
-
             pkgsi686Linux.glibc
             pkgsi686Linux.zlib
+            aapt2
           ];
           shellHook = ''
             export ANDROID_NDK="${pkgs.androidPkgs.ndk-bundle}/share/android-ndk"
@@ -96,7 +134,9 @@
             export PATH="$ANDROID_SDK_ROOT/tools:$PATH"
             export PATH="$ANDROID_SDK_ROOT/tools/bin:$PATH"
             export PATH="$ANDROID_HOME/platform-tools:$PATH"
-            export PATH="$ANDROID_HOME/build-tools/33.0.0:$PATH"
+            export PATH="$ANDROID_HOME/build-tools/34.0.0:$PATH"
+            export PATH="$PATH:${pkgs.aapt2}/bin"
+            export AAPT2_PATH="${pkgs.aapt2}/bin/aapt2"
             export CGO_ENABLED=1
             export GOPATH="$HOME/go"
             export GOCACHE="$HOME/.cache/go-build"
@@ -104,8 +144,8 @@
             export JAVA_HOME="${pkgs.jdk17}"
             export GRADLE_HOME="${pkgs.gradle_8}"
             export PATH="$GRADLE_HOME/bin:$PATH"
-            rm -rf $HOME/.gradle/caches/
-            rm -rf .gradle
+            # rm -rf $HOME/.gradle/caches/
+            # rm -rf .gradle
           '';
         };
       });

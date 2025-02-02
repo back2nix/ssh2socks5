@@ -1,7 +1,7 @@
 # Defining variables
 BINARY_NAME := ssh2socks5
 ANDROID_PKG := com.example.ssh2socks5
-ANDROID_API := 33
+ANDROID_API := 30
 ANDROID_ARCH := arm64
 GO_FILES := $(shell find . -name '*.go')
 ANDROID_DIR := android
