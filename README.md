@@ -87,4 +87,4 @@ Note: The app itself doesn't create a system-wide VPN. To route all device traff
 
 ## License
 
-[Add your license information here]
+MIT
