@@ -1,0 +1,27 @@
+schema = 3
+
+[mod]
+  [mod."github.com/armon/go-socks5"]
+    version = "v0.0.0-20160902184237-e75332964ef5"
+    hash = "sha256-2F/mqTbr7jhtlZ0UGMRfHrjXbHbGwTJi951y4CQInIA="
+  [mod."golang.org/x/crypto"]
+    version = "v0.32.0"
+    hash = "sha256-4l8XyVfpunL7d03otqfx3ouG3qkSF+LT7VuH1K3oo2I="
+  [mod."golang.org/x/mobile"]
+    version = "v0.0.0-20250106192035-c31d5b91ecc3"
+    hash = "sha256-MjGbruZXV44+wNIgKpelOvSKglvmHIGPeYuGKSUdEGw="
+  [mod."golang.org/x/mod"]
+    version = "v0.22.0"
+    hash = "sha256-U+jUPEHP4QUm0eu9upRnwBxeKhpUknEcn8l8ZvxgZ58="
+  [mod."golang.org/x/net"]
+    version = "v0.34.0"
+    hash = "sha256-AZOLY4MUNxxDw5ZQtO9dmY/YRo1gFW87YvpX/eLTy4Q="
+  [mod."golang.org/x/sync"]
+    version = "v0.10.0"
+    hash = "sha256-HWruKClrdoBKVdxKCyoazxeQV4dIYLdkHekQvx275/o="
+  [mod."golang.org/x/sys"]
+    version = "v0.29.0"
+    hash = "sha256-qfsodJQ1H1CBI8yQWOvsXJgY5qHmiuw566HrrIseYHI="
+  [mod."golang.org/x/tools"]
+    version = "v0.29.0"
+    hash = "sha256-lOaCi0tTzSzlD6pejL+2eAiQDHxGMQoYN3r2kF/QyDU="

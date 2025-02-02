@@ -53,12 +53,17 @@ clean:
 	rm -rf $(HOME)/.gradle/caches
 	cd $(ANDROID_DIR) && ./gradlew clean --no-daemon
 
+PARAMS = -lport=1081 \
+         -host=35.193.63.104 \
+         -user=bg \
+         -key=/home/bg/Documents/code/backup/.ssh/google-france-key
+
 .PHONY: run
 run: build-go
-	./bin/$(BINARY_NAME) -lport=1081 \
-		-host=35.193.63.104 \
-		-user=bg \
-		-key=/home/bg/Documents/code/backup/.ssh/google-france-key
+	./bin/$(BINARY_NAME) $(PARAMS)
+
+nix-run:
+	nix run .#ssh2socks5 -- $(PARAMS)
 
 .PHONY: log/crash
 log/crash:
@@ -67,3 +72,6 @@ log/crash:
 .PHONY: log/cat
 log/cat:
 	adb logcat | grep com.example.minimal
+
+update/gomod:
+	gomod2nix generate

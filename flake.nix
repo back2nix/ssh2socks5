@@ -1,11 +1,12 @@
 {
-  description = "Android development environment";
+  description = "SSH to SOCKS5 proxy with Android support";
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/df27247e6f3e636c119e2610bf12d38b5e98cc79";
     nixpkgs-unstable.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
+    gomod2nix.url = "github:nix-community/gomod2nix";
   };
-  outputs = { self, nixpkgs, nixpkgs-unstable, flake-utils }:
+  outputs = { self, nixpkgs, nixpkgs-unstable, flake-utils, gomod2nix }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs-unstable = import nixpkgs-unstable {
@@ -15,6 +16,7 @@
         };
         overlays = final: prev: {
           unstable = pkgs-unstable;
+          inherit (gomod2nix.packages.${system}) gomod2nix;
           aapt2 = final.callPackage ({ lib, stdenv, fetchurl }:
             let
               inherit (lib) getAttr;
@@ -85,95 +87,23 @@
         };
         pkgs = import nixpkgs {
           inherit system;
-          overlays = [ overlays ];
+          overlays = [ overlays gomod2nix.overlays.default ];
           config = {
             allowUnfree = true;
             android_sdk.accept_license = true;
           };
         };
         ndkVersion = "21.3.6528147";
+        callPackage = pkgs.callPackage;
       in
       {
-        devShells.default = pkgs.mkShell {
-          buildInputs = with pkgs; [
-            go_1_22
-            jdk17
-            gradle_8
-            androidPkgs.platform-tools
-            androidPkgs.build-tools
-            androidPkgs.platforms
-            unstable.gomobile
-            clang
-            which
-            file
-            procps
-            findutils
-            gnutar
-            gzip
-            gnumake
-            gcc
-            zlib
-            libGL
-            libGLU
-            xorg.libX11
-            xorg.libXext
-            xorg.libXrender
-            xorg.libXrandr
-            xorg.libXi
-            xorg.libXcursor
-            xorg.libXfixes
-            pkgsi686Linux.glibc
-            pkgsi686Linux.zlib
-            aapt2
-          ];
-
-
-          shellHook = ''
-            export ANDROID_NDK="${pkgs.androidPkgs.ndk-bundle}/share/android-ndk"
-            export ANDROID_HOME="${pkgs.androidPkgs.androidsdk}/libexec/android-sdk"
-            export ANDROID_NDK_ROOT="${pkgs.androidPkgs.ndk-bundle}/share/android-sdk/ndk/25.2.9519653"
-            export ANDROID_SDK_ROOT="$ANDROID_HOME"
-            export PATH="$ANDROID_SDK_ROOT/tools:$PATH"
-            export PATH="$ANDROID_SDK_ROOT/tools/bin:$PATH"
-            export PATH="$ANDROID_HOME/platform-tools:$PATH"
-            export PATH="$ANDROID_HOME/build-tools/34.0.0:$PATH"
-            export PATH="$PATH:${pkgs.aapt2}/bin"
-            export AAPT2_PATH="${pkgs.aapt2}/bin/aapt2"
-            export CGO_ENABLED=1
-            export GOPATH="$HOME/go"
-            export GOCACHE="$HOME/.cache/go-build"
-            export GOMODCACHE="$GOPATH/pkg/mod"
-            export JAVA_HOME="${pkgs.jdk17}"
-            export GRADLE_HOME="${pkgs.gradle_8}"
-            export PATH="$GRADLE_HOME/bin:$PATH"
-            export PATH="$JAVA_HOME/bin:$PATH"
-
-            # Previous exports remain the same...
-
-            # Create or update gradle.properties with correct paths
-            GRADLE_PROPS="android/gradle.properties"
-
-            # Create base gradle.properties content if it doesn't exist
-            if [ ! -f "$GRADLE_PROPS" ]; then
-              cat > "$GRADLE_PROPS" << EOF
-            org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m
-            android.useAndroidX=true
-            android.enableJetifier=true
-            android.suppressUnsupportedCompileSdk=34
-            org.gradle.daemon=true
-            org.gradle.parallel=true
-            org.gradle.configureondemand=true
-            android.aapt2.log=true
-            org.gradle.logging.level=info
-            EOF
-            fi
-
-            # Update aapt2 and JAVA_HOME paths
-            sed -i '/android.aapt2FromMavenOverride=/d' "$GRADLE_PROPS"
-            sed -i '/org.gradle.java.home=/d' "$GRADLE_PROPS"
-            echo "android.aapt2FromMavenOverride=${pkgs.aapt2}/bin/aapt2" >> "$GRADLE_PROPS"
-            echo "org.gradle.java.home=${pkgs.jdk17}" >> "$GRADLE_PROPS"
-          '';
+        packages = {
+          ssh2socks5 = callPackage ./. { inherit (pkgs) buildGoApplication; };
+          default = self.packages.${system}.ssh2socks5;
         };
-      });
+        devShells.default = callPackage ./shell.nix {
+          inherit (pkgs) mkGoEnv gomod2nix;
+        };
+      }
+    );
 }
