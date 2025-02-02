@@ -62,6 +62,14 @@ make build-go
 ```bash
 make run
 ```
+- or
+```
+nix run github:back2nix/ssh2socks5#ssh2socks5 -- -lport=1081 -host=35.193.63.104 -user=bg -key=/home/bg/Documents/code/backup/.ssh/google-france-key
+```
+- or
+```
+nix run .#ssh2socks5 -- -lport=1081 -host=35.193.63.104 -user=bg -key=/home/bg/Documents/code/backup/.ssh/google-france-key
+```
 
 ## Usage
 
