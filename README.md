@@ -21,12 +21,12 @@ A lightweight SOCKS5 proxy that tunnels traffic through SSH connections. Availab
 
 1. Generate SSH key (if you don't have one):
 ```bash
-ssh-keygen -t ed25519 -C "your_email@example.com"
+ssh-keygen -t rsa -b 4096 -f ~/.ssh/google-france-key
 ```
 
 2. Copy public key to your server:
 ```bash
-ssh-copy-id -i ~/.ssh/id_ed25519.pub username@your_server
+ssh-copy-id -i ~/.ssh/google-france-key.pub username@your_server
 ```
 
 ## Quick Start
