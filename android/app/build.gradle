@@ -49,4 +49,5 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
     implementation(name: 'proxy', ext: 'aar')
+    implementation 'androidx.core:core:1.12.0'
 }

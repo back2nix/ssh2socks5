@@ -6,18 +6,12 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.FileOutputStream
-import mobile.Mobile
+import android.content.Intent
+import android.content.ClipboardManager
+import android.content.Context
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import android.content.ClipboardManager
-import android.content.Context
 
 class MainActivity : AppCompatActivity() {
     private lateinit var hostInput: EditText
@@ -84,7 +78,6 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "Log copied to clipboard", Toast.LENGTH_SHORT).show()
         }
 
-        stopButton.isEnabled = true
         updateButtonStates()
         appendToLog("Application started")
 
@@ -128,88 +121,36 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val keyFile = File(filesDir, "private_key.pem")
-                FileOutputStream(keyFile).use {
-                    it.write(privateKey.toByteArray())
-                }
-
-                appendToLog("Starting proxy service...")
-                val error = try {
-                    Mobile.startProxy(
-                        host,
-                        port,
-                        user,
-                        "",             // SSH Password (empty when using key)
-                        keyFile.absolutePath,
-                        "1081"          // Local Port
-                    )
-                    null
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    e.message
-                }
-
-                withContext(Dispatchers.Main) {
-                    if (error == null) {
-                        isProxyRunning = true
-                        saveState()
-                        updateButtonStates()
-                        appendToLog("Proxy started successfully")
-                        Toast.makeText(this@MainActivity, "Proxy started", Toast.LENGTH_SHORT).show()
-                    } else {
-                        appendToLog("Error starting proxy: $error")
-                        Toast.makeText(this@MainActivity, "Error: $error", Toast.LENGTH_LONG).show()
-                    }
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-                appendToLog("Exception: ${e.message}")
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
-                }
-            }
+        val intent = Intent(this, ProxyService::class.java).apply {
+            action = "START"
+            putExtra("host", host)
+            putExtra("port", port)
+            putExtra("user", user)
+            putExtra("privateKey", privateKey)
         }
+        startService(intent)
+
+        isProxyRunning = true
+        saveState()
+        updateButtonStates()
+        appendToLog("Starting proxy service...")
     }
 
     private fun stopProxy() {
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                appendToLog("Stopping proxy service...")
-                val error = try {
-                    Mobile.stopProxy()
-                    null
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    e.message
-                }
-
-                withContext(Dispatchers.Main) {
-                    if (error == null) {
-                        isProxyRunning = false
-                        saveState()
-                        updateButtonStates()
-                        appendToLog("Proxy stopped successfully")
-                        Toast.makeText(this@MainActivity, "Proxy stopped", Toast.LENGTH_SHORT).show()
-                    } else {
-                        appendToLog("Error stopping proxy: $error")
-                        Toast.makeText(this@MainActivity, "Error: $error", Toast.LENGTH_LONG).show()
-                    }
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-                appendToLog("Exception while stopping proxy: ${e.message}")
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(this@MainActivity, "Error stopping proxy: ${e.message}", Toast.LENGTH_LONG).show()
-                }
-            }
+        val intent = Intent(this, ProxyService::class.java).apply {
+            action = "STOP"
         }
+        startService(intent)
+
+        isProxyRunning = false
+        saveState()
+        updateButtonStates()
+        appendToLog("Stopping proxy service...")
     }
 
     private fun updateButtonStates() {
         startButton.isEnabled = !isProxyRunning
-        stopButton.isEnabled = true
+        stopButton.isEnabled = isProxyRunning
         statusText.text = "Status: ${if (isProxyRunning) "Running" else "Stopped"}"
     }
 
