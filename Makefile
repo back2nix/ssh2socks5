@@ -27,6 +27,7 @@ build-android:
 	# Clean Android build cache
 	cd $(ANDROID_DIR) && ./gradlew clean --no-daemon
 	rm -rf $(HOME)/.gradle/caches/
+	mkdir -p android/app/libs
 
 	# Initialize gomobile
 	gomobile init -v
@@ -38,7 +39,7 @@ build-android:
 	gomobile bind -v \
 	-target=android/$(ANDROID_ARCH) \
 	-androidapi $(ANDROID_API) \
-	-o $(ANDROID_DIR)/app/maven/ssh2socks5.aar ./mobile
+	-o $(ANDROID_DIR)/app/libs/proxy.aar ./mobile
 
 	# Build Android APK
 	cd $(ANDROID_DIR) && ./gradlew build --no-daemon
@@ -55,7 +56,7 @@ test:
 clean:
 	rm -f $(BINARY_NAME)
 	rm -f ssh2socks5.apk
-	rm -rf $(ANDROID_DIR)/app/maven/ssh2socks5.aar
+	rm -rf $(ANDROID_DIR)/app/maven/proxy.aar
 	rm -rf $(ANDROID_DIR)/app/build
 	rm -rf $(HOME)/.gradle/caches
 	cd $(ANDROID_DIR) && ./gradlew clean --no-daemon
