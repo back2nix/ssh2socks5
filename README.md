@@ -1,49 +1,84 @@
-# Project ssh2sock5
+# SSH2SOCKS5 Proxy
 
-## Installation and Setup
+A lightweight SOCKS5 proxy that tunnels traffic through SSH connections. Available as both a standalone Go application and an Android app.
 
-### Install dependencies step-by-step
+## Features
 
-#### All dependencies for run project
+- SOCKS5 proxy server that works over SSH tunnels
+- SSH authentication using password or private key
+- Android app with persistent connection management
+- Automatic reconnection on connection loss
 
+## Requirements
+
+- Go 1.20 or later
+- Nix package manager
+- Android SDK (for building Android app)
+- SSH key access to your server
+- NekoBox app (for system-wide VPN on Android)
+
+## SSH Setup
+
+1. Generate SSH key (if you don't have one):
+```bash
+ssh-keygen -t ed25519 -C "your_email@example.com"
 ```
-nix
-direnv - https://direnv.net/docs/hook.html
-make
+
+2. Copy public key to your server:
+```bash
+ssh-copy-id -i ~/.ssh/id_ed25519.pub username@your_server
 ```
 
-#### For Linux users
+## Quick Start
 
-```
+1. Install Nix and direnv:
+```bash
 curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
 ```
-and press Y
-after install reopen shell
 
-
-- for auto activate shell
-```
-cd ssh2sock5
+2. Set up the environment:
+```bash
+cd ssh2socks5
 direnv allow
 ```
-or
-```
-cd ssh2sock5
+Or use:
+```bash
 nix develop
 ```
-or
-```
-nix shell
-```
 
-### build apk
+3. Build:
 
-```
+For Android app:
+```bash
 make build-android
 ```
 
-### run in console
-
+For standalone proxy:
+```bash
+make build-go
 ```
+
+4. Run the proxy:
+```bash
 make run
 ```
+
+## Usage
+
+### Desktop
+Configure your applications to use the SOCKS5 proxy at `127.0.0.1:1081` (default port).
+
+### Android
+1. Install the SSH2SOCKS5 APK
+2. Enter your SSH server details and private key
+3. Start the proxy
+
+Note: The app itself doesn't create a system-wide VPN. To route all device traffic through the proxy:
+1. Install NekoBox from F-Droid or Google Play
+2. Create a new SOCKS5 connection in NekoBox
+3. Configure it to connect to `127.0.0.1:1081`
+4. Enable the VPN in NekoBox to route all device traffic through the proxy
+
+## License
+
+[Add your license information here]
