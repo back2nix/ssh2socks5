@@ -25,6 +25,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var logText: TextView
     private var isProxyRunning = false
 
+    companion object {
+        private const val PREFS_NAME = "ProxyPrefs"
+        private const val KEY_PRIVATE_KEY = "private_key"
+        private const val KEY_PROXY_RUNNING = "proxy_running"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -35,6 +41,14 @@ class MainActivity : AppCompatActivity() {
         statusText = findViewById(R.id.statusText)
         logText = findViewById(R.id.logText)
 
+        // Восстанавливаем сохраненный ключ
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val savedKey = prefs.getString(KEY_PRIVATE_KEY, "")
+        privateKeyInput.setText(savedKey)
+
+        // Восстанавливаем состояние прокси
+        isProxyRunning = prefs.getBoolean(KEY_PROXY_RUNNING, false)
+
         startButton.setOnClickListener {
             if (!isProxyRunning) {
                 startProxy()
@@ -42,22 +56,39 @@ class MainActivity : AppCompatActivity() {
         }
 
         stopButton.setOnClickListener {
-            if (isProxyRunning) {
-                stopProxy()
-            }
+            stopProxy()
         }
 
-        updateButtonStates()
+        // Stop кнопка всегда активна
+        stopButton.isEnabled = true
 
-        // Инициализация логов
+        updateButtonStates()
         appendToLog("Application started")
+
+        // Если прокси был запущен, пытаемся восстановить соединение
+        if (isProxyRunning) {
+            startProxy()
+        }
+    }
+
+    private fun saveState() {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        prefs.edit().apply {
+            putString(KEY_PRIVATE_KEY, privateKeyInput.text.toString())
+            putBoolean(KEY_PROXY_RUNNING, isProxyRunning)
+            apply()
+        }
     }
 
     private fun appendToLog(message: String) {
-        val timestamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-        val logMessage = "[$timestamp] $message\n"
-        runOnUiThread {
-            logText.append(logMessage)
+        try {
+            val timestamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+            val logMessage = "[$timestamp] $message\n"
+            runOnUiThread {
+                logText.append(logMessage)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
@@ -77,28 +108,35 @@ class MainActivity : AppCompatActivity() {
 
                 appendToLog("Starting proxy service...")
 
-                // Используем предопределенные значения для примера
-                val result = Mobile.startProxy(
-                    "35.193.63.104", // SSH Host
-                    "22",            // SSH Port
-                    "bg",           // SSH User
-                    "",             // SSH Password (пустой, так как используем ключ)
-                    keyFile.absolutePath,
-                    "1081"          // Local Port
-                )
+                val error = try {
+                    Mobile.startProxy(
+                        "35.193.63.104", // SSH Host
+                        "22",            // SSH Port
+                        "bg",           // SSH User
+                        "",             // SSH Password (empty when using key)
+                        keyFile.absolutePath,
+                        "1081"          // Local Port
+                    )
+                    null
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    e.message
+                }
 
                 withContext(Dispatchers.Main) {
-                    if (result == null) {
+                    if (error == null) {
                         isProxyRunning = true
+                        saveState()
                         updateButtonStates()
                         appendToLog("Proxy started successfully")
                         Toast.makeText(this@MainActivity, "Proxy started", Toast.LENGTH_SHORT).show()
                     } else {
-                        appendToLog("Error starting proxy: $result")
-                        Toast.makeText(this@MainActivity, "Error: $result", Toast.LENGTH_LONG).show()
+                        appendToLog("Error starting proxy: $error")
+                        Toast.makeText(this@MainActivity, "Error: $error", Toast.LENGTH_LONG).show()
                     }
                 }
             } catch (e: Exception) {
+                e.printStackTrace()
                 appendToLog("Exception: ${e.message}")
                 withContext(Dispatchers.Main) {
                     Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
@@ -109,18 +147,34 @@ class MainActivity : AppCompatActivity() {
 
     private fun stopProxy() {
         CoroutineScope(Dispatchers.IO).launch {
-            appendToLog("Stopping proxy service...")
-            val result = Mobile.stopProxy()
+            try {
+                appendToLog("Stopping proxy service...")
 
-            withContext(Dispatchers.Main) {
-                if (result == null) {
-                    isProxyRunning = false
-                    updateButtonStates()
-                    appendToLog("Proxy stopped successfully")
-                    Toast.makeText(this@MainActivity, "Proxy stopped", Toast.LENGTH_SHORT).show()
-                } else {
-                    appendToLog("Error stopping proxy: $result")
-                    Toast.makeText(this@MainActivity, "Error: $result", Toast.LENGTH_LONG).show()
+                val error = try {
+                    Mobile.stopProxy()
+                    null
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    e.message
+                }
+
+                withContext(Dispatchers.Main) {
+                    if (error == null) {
+                        isProxyRunning = false
+                        saveState()
+                        updateButtonStates()
+                        appendToLog("Proxy stopped successfully")
+                        Toast.makeText(this@MainActivity, "Proxy stopped", Toast.LENGTH_SHORT).show()
+                    } else {
+                        appendToLog("Error stopping proxy: $error")
+                        Toast.makeText(this@MainActivity, "Error: $error", Toast.LENGTH_LONG).show()
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                appendToLog("Exception while stopping proxy: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@MainActivity, "Error stopping proxy: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -128,7 +182,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateButtonStates() {
         startButton.isEnabled = !isProxyRunning
-        stopButton.isEnabled = isProxyRunning
+        // Stop кнопка всегда активна
+        stopButton.isEnabled = true
         statusText.text = "Status: ${if (isProxyRunning) "Running" else "Stopped"}"
+    }
+
+    override fun onPause() {
+        super.onPause()
+        saveState()
     }
 }

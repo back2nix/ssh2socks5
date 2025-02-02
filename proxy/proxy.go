@@ -80,6 +80,7 @@ func (p *ProxyServer) Start() error {
 		return err
 	}
 	p.sshClient = client
+
 	dialer := func(ctx context.Context, network, addr string) (net.Conn, error) {
 		atomic.AddInt32(&p.activeConnections, 1)
 		conn, err := client.Dial(network, addr)
@@ -94,6 +95,8 @@ func (p *ProxyServer) Start() error {
 			},
 		}, nil
 	}
+
+	// Здесь удаляем опции UDP, т.к. они больше не поддерживаются.
 	socksConfig := &socks5.Config{
 		Dial: dialer,
 	}
@@ -102,101 +105,96 @@ func (p *ProxyServer) Start() error {
 		return err
 	}
 	p.socksServer = socksServer
-	listenAddr := "127.0.0.1:" + p.config.LocalPort
+
+	listenAddr := "0.0.0.0:" + p.config.LocalPort
 	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		return err
 	}
 	p.listener = listener
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
 
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				log.Printf("Failed to accept connection: %v", err)
-				continue
-			}
-			go p.handleClient(conn) // Добавьте эту строку
-		}
-	}()
+	// Запускаем SOCKS5-сервер (обрабатывает TCP-соединения)
 	go func() {
 		if err := p.socksServer.Serve(listener); err != nil {
+			log.Printf("SOCKS5 server error: %v", err)
 		}
 	}()
+
+	log.Printf("SOCKS5 proxy listening on %s", listenAddr)
 	return nil
 }
 
-func (p *ProxyServer) Stop() error {
-	if p.listener != nil {
-		p.listener.Close()
+func (s *ProxyServer) Stop() error {
+	if s.listener != nil {
+		s.listener.Close()
 	}
-	if p.sshClient != nil {
-		p.sshClient.Close()
+	if s.sshClient != nil {
+		s.sshClient.Close()
 	}
 	return nil
 }
 
 func (s *ProxyServer) handleClient(conn net.Conn) {
 	defer conn.Close()
-
 	log.Printf("New connection from: %s", conn.RemoteAddr())
-
-	// Установим таймаут на чтение
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-
-	// 1. Чтение версии протокола
 	version := make([]byte, 1)
 	if _, err := io.ReadFull(conn, version); err != nil {
 		log.Printf("Version read error: %v", err)
 		return
 	}
-	log.Printf("SOCKS version received: %d", version[0])
-
-	// 2. Проверка версии
 	if version[0] != 5 {
 		log.Printf("Unsupported SOCKS version: %d", version[0])
 		return
 	}
-
-	// 3. Чтение методов аутентификации
 	nmethods := make([]byte, 1)
 	if _, err := io.ReadFull(conn, nmethods); err != nil {
 		log.Printf("Failed to read nmethods: %v", err)
 		return
 	}
-
 	methods := make([]byte, nmethods[0])
 	if _, err := io.ReadFull(conn, methods); err != nil {
 		log.Printf("Failed to read methods: %v", err)
 		return
 	}
-
-	// 4. Отправка ответа о методе аутентификации (без аутентификации)
 	if _, err := conn.Write([]byte{0x05, 0x00}); err != nil {
 		log.Printf("Failed to send auth response: %v", err)
 		return
 	}
-
-	// 5. Чтение запроса
-	// - версия протокола (1 байт)
-	// - команда (1 байт)
-	// - зарезервированный байт (1 байт)
-	// - тип адреса (1 байт)
 	header := make([]byte, 4)
 	if _, err := io.ReadFull(conn, header); err != nil {
 		log.Printf("Failed to read request header: %v", err)
 		return
 	}
-
-	// Проверка версии в запросе
 	if header[0] != 5 {
 		log.Printf("Invalid SOCKS version in request: %d", header[0])
 		return
 	}
+	// Если получен UDP Associate, возвращаем dummy-ответ
+	if header[1] == 0x03 {
+		dummyIP := net.ParseIP("0.0.0.0").To4()
+		dummyPort := uint16(0)
+		response := make([]byte, 10)
+		response[0] = 0x05
+		response[1] = 0x00
+		response[2] = 0x00
+		response[3] = 0x01
+		copy(response[4:8], dummyIP)
+		binary.BigEndian.PutUint16(response[8:10], dummyPort)
+		if _, err := conn.Write(response); err != nil {
+			log.Printf("Failed to send UDP associate response: %v", err)
+			return
+		}
+		log.Printf("UDP associate requested but UDP forwarding is not implemented.")
+		// Оставляем соединение открытым
+		buf := make([]byte, 1)
+		for {
+			if _, err := conn.Read(buf); err != nil {
+				return
+			}
+		}
+	}
 
-	// 6. Чтение адреса
 	var addr string
 	switch header[3] {
 	case 1: // IPv4
@@ -229,32 +227,21 @@ func (s *ProxyServer) handleClient(conn net.Conn) {
 		log.Printf("Unsupported address type: %d", header[3])
 		return
 	}
-
-	// 7. Чтение порта
 	portBytes := make([]byte, 2)
 	if _, err := io.ReadFull(conn, portBytes); err != nil {
 		log.Printf("Failed to read port: %v", err)
 		return
 	}
 	port := binary.BigEndian.Uint16(portBytes)
-
-	log.Printf("Received request for: %s:%d", addr, port)
-
-	// 8. Установка соединения через SSH туннель
 	target := fmt.Sprintf("%s:%d", addr, port)
 	remote, err := s.sshClient.Dial("tcp", target)
 	if err != nil {
 		log.Printf("Failed to connect to target: %v", err)
-		// Отправка ответа об ошибке
 		conn.Write([]byte{0x05, 0x04, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
 		return
 	}
 	defer remote.Close()
-
-	// 9. Отправка успешного ответа
 	conn.Write([]byte{0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
-
-	// 10. Проксирование данных
 	go func() {
 		io.Copy(remote, conn)
 	}()

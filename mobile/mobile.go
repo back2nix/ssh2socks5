@@ -11,6 +11,7 @@ var (
 	proxyLock    sync.Mutex
 )
 
+// StartProxy starts the SOCKS5 proxy server
 func StartProxy(sshHost, sshPort, sshUser, sshPassword, keyPath, localPort string) error {
 	proxyLock.Lock()
 	defer proxyLock.Unlock()
@@ -30,8 +31,7 @@ func StartProxy(sshHost, sshPort, sshUser, sshPassword, keyPath, localPort strin
 		return err
 	}
 
-	err = p.Start()
-	if err != nil {
+	if err := p.Start(); err != nil {
 		return err
 	}
 
@@ -39,14 +39,16 @@ func StartProxy(sshHost, sshPort, sshUser, sshPassword, keyPath, localPort strin
 	return nil
 }
 
+// StopProxy stops the SOCKS5 proxy server
 func StopProxy() error {
 	proxyLock.Lock()
 	defer proxyLock.Unlock()
 
 	if currentProxy != nil {
-		err := currentProxy.Stop()
+		if err := currentProxy.Stop(); err != nil {
+			return err
+		}
 		currentProxy = nil
-		return err
 	}
 	return nil
 }
