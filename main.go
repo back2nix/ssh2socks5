@@ -9,8 +9,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"ssh2socks5/proxy"
 	"syscall"
+
+	"ssh2socks5/proxy"
 )
 
 func main() {
@@ -42,8 +43,12 @@ func main() {
 	}
 
 	if err := proxyServer.Start(); err != nil {
-		log.Fatal(err)
+		log.Printf("SSH connection error: %v", err)
+		return
 	}
+
+	log.Printf("Proxy listening on :%s", config.LocalPort)
+	log.Printf("SSH connection established to %s:%s", config.SSHHost, config.SSHPort)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
