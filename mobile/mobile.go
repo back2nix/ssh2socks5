@@ -1,8 +1,9 @@
 package mobile
 
 import (
-	"ssh2socks5/proxy"
 	"sync"
+
+	"ssh2socks5/proxy"
 )
 
 var (
@@ -10,15 +11,6 @@ var (
 	proxyLock    sync.Mutex
 )
 
-// StartProxy запускает SSH SOCKS5 прокси с заданной конфигурацией.
-// Параметры:
-//
-//	sshHost - адрес SSH-сервера,
-//	sshPort - порт SSH-сервера,
-//	sshUser - имя пользователя,
-//	sshPassword - пароль (если ключ не указан),
-//	keyPath - путь к SSH приватному ключу,
-//	localPort - локальный порт для SOCKS5 прокси.
 func StartProxy(sshHost, sshPort, sshUser, sshPassword, keyPath, localPort string) error {
 	proxyLock.Lock()
 	defer proxyLock.Unlock()
@@ -37,15 +29,16 @@ func StartProxy(sshHost, sshPort, sshUser, sshPassword, keyPath, localPort strin
 	if err != nil {
 		return err
 	}
+
 	err = p.Start()
 	if err != nil {
 		return err
 	}
+
 	currentProxy = p
 	return nil
 }
 
-// StopProxy останавливает запущенный SSH SOCKS5 прокси.
 func StopProxy() error {
 	proxyLock.Lock()
 	defer proxyLock.Unlock()

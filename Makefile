@@ -25,8 +25,8 @@ build-go:
 .PHONY: build-android
 build-android:
 	# Clean Android build cache
-	cd $(ANDROID_DIR) && ./gradlew clean --no-daemon
-	rm -rf $(HOME)/.gradle/caches/
+	# cd $(ANDROID_DIR) && ./gradlew clean --no-daemon
+	# rm -rf $(HOME)/.gradle/caches/
 	mkdir -p android/app/libs
 
 	# Initialize gomobile
