@@ -144,6 +144,7 @@
             export JAVA_HOME="${pkgs.jdk17}"
             export GRADLE_HOME="${pkgs.gradle_8}"
             export PATH="$GRADLE_HOME/bin:$PATH"
+            export PATH="$JAVA_HOME/bin:$PATH"
             # rm -rf $HOME/.gradle/caches/
             # rm -rf .gradle
           '';
