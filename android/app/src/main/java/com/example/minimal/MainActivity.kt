@@ -16,17 +16,27 @@ import mobile.Mobile
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import android.content.ClipboardManager
+import android.content.Context
 
 class MainActivity : AppCompatActivity() {
+    private lateinit var hostInput: EditText
+    private lateinit var portInput: EditText
+    private lateinit var userInput: EditText
     private lateinit var privateKeyInput: EditText
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
+    private lateinit var clearLogButton: Button
+    private lateinit var copyLogButton: Button
     private lateinit var statusText: TextView
     private lateinit var logText: TextView
     private var isProxyRunning = false
 
     companion object {
         private const val PREFS_NAME = "ProxyPrefs"
+        private const val KEY_HOST = "host"
+        private const val KEY_PORT = "port"
+        private const val KEY_USER = "user"
         private const val KEY_PRIVATE_KEY = "private_key"
         private const val KEY_PROXY_RUNNING = "proxy_running"
     }
@@ -35,18 +45,22 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        hostInput = findViewById(R.id.hostInput)
+        portInput = findViewById(R.id.portInput)
+        userInput = findViewById(R.id.userInput)
         privateKeyInput = findViewById(R.id.privateKeyInput)
         startButton = findViewById(R.id.startButton)
         stopButton = findViewById(R.id.stopButton)
+        clearLogButton = findViewById(R.id.clearLogButton)
+        copyLogButton = findViewById(R.id.copyLogButton)
         statusText = findViewById(R.id.statusText)
         logText = findViewById(R.id.logText)
 
-        // Восстанавливаем сохраненный ключ
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val savedKey = prefs.getString(KEY_PRIVATE_KEY, "")
-        privateKeyInput.setText(savedKey)
-
-        // Восстанавливаем состояние прокси
+        hostInput.setText(prefs.getString(KEY_HOST, ""))
+        portInput.setText(prefs.getString(KEY_PORT, "22"))
+        userInput.setText(prefs.getString(KEY_USER, ""))
+        privateKeyInput.setText(prefs.getString(KEY_PRIVATE_KEY, ""))
         isProxyRunning = prefs.getBoolean(KEY_PROXY_RUNNING, false)
 
         startButton.setOnClickListener {
@@ -59,13 +73,21 @@ class MainActivity : AppCompatActivity() {
             stopProxy()
         }
 
-        // Stop кнопка всегда активна
-        stopButton.isEnabled = true
+        clearLogButton.setOnClickListener {
+            logText.text = ""
+            appendToLog("Log cleared")
+        }
 
+        copyLogButton.setOnClickListener {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setText(logText.text)
+            Toast.makeText(this, "Log copied to clipboard", Toast.LENGTH_SHORT).show()
+        }
+
+        stopButton.isEnabled = true
         updateButtonStates()
         appendToLog("Application started")
 
-        // Если прокси был запущен, пытаемся восстановить соединение
         if (isProxyRunning) {
             startProxy()
         }
@@ -74,6 +96,9 @@ class MainActivity : AppCompatActivity() {
     private fun saveState() {
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         prefs.edit().apply {
+            putString(KEY_HOST, hostInput.text.toString())
+            putString(KEY_PORT, portInput.text.toString())
+            putString(KEY_USER, userInput.text.toString())
             putString(KEY_PRIVATE_KEY, privateKeyInput.text.toString())
             putBoolean(KEY_PROXY_RUNNING, isProxyRunning)
             apply()
@@ -93,9 +118,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startProxy() {
+        val host = hostInput.text.toString()
+        val port = portInput.text.toString()
+        val user = userInput.text.toString()
         val privateKey = privateKeyInput.text.toString()
-        if (privateKey.isEmpty()) {
-            Toast.makeText(this, "Please enter private key", Toast.LENGTH_SHORT).show()
+
+        if (host.isEmpty() || port.isEmpty() || user.isEmpty() || privateKey.isEmpty()) {
+            Toast.makeText(this, "Please fill all fields", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -107,12 +136,11 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 appendToLog("Starting proxy service...")
-
                 val error = try {
                     Mobile.startProxy(
-                        "35.193.63.104", // SSH Host
-                        "22",            // SSH Port
-                        "bg",           // SSH User
+                        host,
+                        port,
+                        user,
                         "",             // SSH Password (empty when using key)
                         keyFile.absolutePath,
                         "1081"          // Local Port
@@ -149,7 +177,6 @@ class MainActivity : AppCompatActivity() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 appendToLog("Stopping proxy service...")
-
                 val error = try {
                     Mobile.stopProxy()
                     null
@@ -182,7 +209,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateButtonStates() {
         startButton.isEnabled = !isProxyRunning
-        // Stop кнопка всегда активна
         stopButton.isEnabled = true
         statusText.text = "Status: ${if (isProxyRunning) "Running" else "Stopped"}"
     }
