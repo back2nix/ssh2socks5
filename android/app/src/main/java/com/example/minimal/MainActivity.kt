@@ -5,10 +5,11 @@ import android.os.Bundle
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
-import android.widget.Toast
+import android.widget.ImageButton
 import android.content.Intent
 import android.content.ClipboardManager
 import android.content.Context
+import android.widget.Toast
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -20,8 +21,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var privateKeyInput: EditText
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
-    private lateinit var clearLogButton: Button
-    private lateinit var copyLogButton: Button
+    private lateinit var clearLogButton: ImageButton
+    private lateinit var copyLogButton: ImageButton
     private lateinit var statusText: TextView
     private lateinit var logText: TextView
     private var isProxyRunning = false
