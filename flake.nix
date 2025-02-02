@@ -126,6 +126,8 @@
             pkgsi686Linux.zlib
             aapt2
           ];
+
+
           shellHook = ''
             export ANDROID_NDK="${pkgs.androidPkgs.ndk-bundle}/share/android-ndk"
             export ANDROID_HOME="${pkgs.androidPkgs.androidsdk}/libexec/android-sdk"
@@ -145,8 +147,32 @@
             export GRADLE_HOME="${pkgs.gradle_8}"
             export PATH="$GRADLE_HOME/bin:$PATH"
             export PATH="$JAVA_HOME/bin:$PATH"
-            # rm -rf $HOME/.gradle/caches/
-            # rm -rf .gradle
+
+            # Previous exports remain the same...
+
+            # Create or update gradle.properties with correct paths
+            GRADLE_PROPS="android/gradle.properties"
+
+            # Create base gradle.properties content if it doesn't exist
+            if [ ! -f "$GRADLE_PROPS" ]; then
+              cat > "$GRADLE_PROPS" << EOF
+            org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m
+            android.useAndroidX=true
+            android.enableJetifier=true
+            android.suppressUnsupportedCompileSdk=34
+            org.gradle.daemon=true
+            org.gradle.parallel=true
+            org.gradle.configureondemand=true
+            android.aapt2.log=true
+            org.gradle.logging.level=info
+            EOF
+            fi
+
+            # Update aapt2 and JAVA_HOME paths
+            sed -i '/android.aapt2FromMavenOverride=/d' "$GRADLE_PROPS"
+            sed -i '/org.gradle.java.home=/d' "$GRADLE_PROPS"
+            echo "android.aapt2FromMavenOverride=${pkgs.aapt2}/bin/aapt2" >> "$GRADLE_PROPS"
+            echo "org.gradle.java.home=${pkgs.jdk17}" >> "$GRADLE_PROPS"
           '';
         };
       });
