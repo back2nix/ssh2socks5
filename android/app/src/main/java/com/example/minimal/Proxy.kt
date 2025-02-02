@@ -2,7 +2,7 @@ package com.example.minimal
 
 object Proxy {
     init {
-        System.loadLibrary("proxy")
+        System.loadLibrary("gojni")  // Изменено с "proxy" на "gojni"
     }
 
     external fun startProxyWithKey(key: String): String?

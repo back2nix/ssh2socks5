@@ -39,7 +39,8 @@ build-android:
 	gomobile bind -v \
 	-target=android/$(ANDROID_ARCH) \
 	-androidapi $(ANDROID_API) \
-	-o $(ANDROID_DIR)/app/libs/proxy.aar ./mobile
+	-o $(ANDROID_DIR)/app/libs/proxy.aar \
+	./mobile
 
 	# Build Android APK
 	cd $(ANDROID_DIR) && ./gradlew build --no-daemon
