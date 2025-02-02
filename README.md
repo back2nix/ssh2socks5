@@ -11,9 +11,7 @@ A lightweight SOCKS5 proxy that tunnels traffic through SSH connections. Availab
 
 ## Requirements
 
-- Go 1.20 or later
 - Nix package manager
-- Android SDK (for building Android app)
 - SSH key access to your server
 - NekoBox app (for system-wide VPN on Android)
 
