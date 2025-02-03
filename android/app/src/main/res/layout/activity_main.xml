@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
@@ -10,25 +9,22 @@
         android:id="@+id/hostInput"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="Host"
-        android:inputType="text"
-        android:maxLines="1" />
+        android:hint="SSH Host"
+        android:inputType="text" />
 
     <EditText
         android:id="@+id/portInput"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="Port"
-        android:inputType="number"
-        android:maxLines="1" />
+        android:hint="SSH Port"
+        android:inputType="number" />
 
     <EditText
         android:id="@+id/userInput"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="User"
-        android:inputType="text"
-        android:maxLines="1" />
+        android:hint="SSH User"
+        android:inputType="text" />
 
     <EditText
         android:id="@+id/privateKeyInput"
@@ -37,8 +33,28 @@
         android:hint="Private Key"
         android:inputType="textMultiLine"
         android:maxLines="2"
-        android:minLines="2"
         android:scrollbars="vertical" />
+
+    <RadioGroup
+        android:id="@+id/proxyTypeGroup"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="8dp">
+
+        <RadioButton
+            android:id="@+id/socks5Radio"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="SOCKS5"
+            android:checked="true" />
+
+        <RadioButton
+            android:id="@+id/httpRadio"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="HTTP" />
+    </RadioGroup>
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -65,23 +81,29 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
-        android:textStyle="bold" />
+        android:text="Status: Stopped" />
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal">
 
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Log:" />
+
         <ImageButton
             android:id="@+id/clearLogButton"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
             android:src="@android:drawable/ic_menu_delete" />
 
         <ImageButton
             android:id="@+id/copyLogButton"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
             android:src="@android:drawable/ic_menu_save" />
     </LinearLayout>
 
@@ -94,7 +116,7 @@
             android:id="@+id/logText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textSize="12sp" />
+            android:typeface="monospace" />
     </ScrollView>
 
 </LinearLayout>

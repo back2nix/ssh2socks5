@@ -1,9 +1,12 @@
 package proxy
 
 import (
+	"bufio"
 	"context"
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -17,12 +20,15 @@ type ProxyServer struct {
 	sshClient         *ssh.Client
 	sshConfig         *ssh.ClientConfig
 	socksServer       *socks5.Server
+	httpServer        *http.Server
 	listener          net.Listener
+	httpListener      net.Listener
 	config            *ProxyConfig
 	activeConnections int32
 	ctx               context.Context
 	cancel            context.CancelFunc
 	clientLock        sync.Mutex
+	proxyType         string // "socks5" or "http"
 }
 
 type ProxyConfig struct {
@@ -33,6 +39,7 @@ type ProxyConfig struct {
 	KeyPath     string
 	LocalPort   string
 	LogPath     string
+	ProxyType   string
 }
 
 type trackedConn struct {
@@ -50,7 +57,8 @@ func (c *trackedConn) Close() error {
 
 func NewProxyServer(config *ProxyConfig) (*ProxyServer, error) {
 	return &ProxyServer{
-		config: config,
+		config:    config,
+		proxyType: config.ProxyType,
 	}, nil
 }
 
@@ -70,6 +78,7 @@ func (p *ProxyServer) Start() error {
 		}
 		authMethods = append(authMethods, ssh.PublicKeys(signer))
 	}
+
 	sshConfig := &ssh.ClientConfig{
 		User:            p.config.SSHUser,
 		Auth:            authMethods,
@@ -77,20 +86,29 @@ func (p *ProxyServer) Start() error {
 		Timeout:         30 * time.Second,
 	}
 	p.sshConfig = sshConfig
+
 	sshAddress := p.config.SSHHost + ":" + p.config.SSHPort
 	client, err := ssh.Dial("tcp", sshAddress, sshConfig)
 	if err != nil {
 		return err
 	}
-	// set the initial SSH connection
+
 	p.clientLock.Lock()
 	p.sshClient = client
 	p.clientLock.Unlock()
 
-	// Set up context for graceful shutdown and reconnection loop.
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 	go p.monitorSSHConnection()
 
+	listenAddr := "0.0.0.0:" + p.config.LocalPort
+
+	if p.proxyType == "http" {
+		return p.startHTTPProxy(listenAddr)
+	}
+	return p.startSocksProxy(listenAddr)
+}
+
+func (p *ProxyServer) startSocksProxy(listenAddr string) error {
 	dialer := func(ctx context.Context, network, addr string) (net.Conn, error) {
 		atomic.AddInt32(&p.activeConnections, 1)
 		client, err := p.getConnectedSSHClient(ctx)
@@ -119,29 +137,145 @@ func (p *ProxyServer) Start() error {
 		return err
 	}
 	p.socksServer = socksServer
-	listenAddr := "0.0.0.0:" + p.config.LocalPort
+
 	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		return err
 	}
 	p.listener = listener
+
 	go func() {
 		if err := p.socksServer.Serve(listener); err != nil {
 			log.Printf("SOCKS5 server error: %v", err)
 		}
 	}()
+
 	log.Printf("SOCKS5 proxy listening on %s", listenAddr)
 	return nil
 }
 
-// getConnectedSSHClient ensures that the SSH client is alive and reconnects if needed.
+func (p *ProxyServer) startHTTPProxy(listenAddr string) error {
+	listener, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		return err
+	}
+	p.httpListener = listener
+
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodConnect {
+				p.handleHTTPSConnection(w, r)
+			} else {
+				p.handleHTTPConnection(w, r)
+			}
+		}),
+	}
+	p.httpServer = server
+
+	go func() {
+		if err := server.Serve(listener); err != http.ErrServerClosed {
+			log.Printf("HTTP proxy server error: %v", err)
+		}
+	}()
+
+	log.Printf("HTTP proxy listening on %s", listenAddr)
+	return nil
+}
+
+func (p *ProxyServer) handleHTTPConnection(w http.ResponseWriter, r *http.Request) {
+	client, err := p.getConnectedSSHClient(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+
+	targetHost := r.Host
+	if r.URL.Port() == "" {
+		targetHost = targetHost + ":80"
+	}
+
+	conn, err := client.Dial("tcp", targetHost)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+	defer conn.Close()
+
+	r.RequestURI = ""
+	if err := r.Write(conn); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	resp, err := http.ReadResponse(bufio.NewReader(conn), r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	for key, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
+}
+
+func (p *ProxyServer) handleHTTPSConnection(w http.ResponseWriter, r *http.Request) {
+	client, err := p.getConnectedSSHClient(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+
+	targetHost := r.Host
+	if r.URL.Port() == "" {
+		targetHost = targetHost + ":443"
+	}
+
+	targetConn, err := client.Dial("tcp", targetHost)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
+		return
+	}
+
+	clientConn, _, err := hijacker.Hijack()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
+	}
+
+	clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+
+	go func() {
+		defer clientConn.Close()
+		defer targetConn.Close()
+		io.Copy(targetConn, clientConn)
+	}()
+
+	go func() {
+		defer clientConn.Close()
+		defer targetConn.Close()
+		io.Copy(clientConn, targetConn)
+	}()
+}
+
 func (p *ProxyServer) getConnectedSSHClient(ctx context.Context) (*ssh.Client, error) {
 	p.clientLock.Lock()
 	defer p.clientLock.Unlock()
+
 	if p.sshClient == nil {
 		return p.reconnectSSH(ctx)
 	}
-	// Use a keepalive request to check the connection.
+
 	_, _, err := p.sshClient.SendRequest("keepalive@openssh.com", true, nil)
 	if err != nil {
 		log.Printf("SSH connection appears dead: %v. Reconnecting...", err)
@@ -149,26 +283,29 @@ func (p *ProxyServer) getConnectedSSHClient(ctx context.Context) (*ssh.Client, e
 		p.sshClient = nil
 		return p.reconnectSSH(ctx)
 	}
+
 	return p.sshClient, nil
 }
 
-// reconnectSSH attempts to reconnect using the stored SSH configuration.
 func (p *ProxyServer) reconnectSSH(ctx context.Context) (*ssh.Client, error) {
 	sshAddress := p.config.SSHHost + ":" + p.config.SSHPort
 	var newClient *ssh.Client
 	var err error
+
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		default:
 		}
+
 		newClient, err = ssh.Dial("tcp", sshAddress, p.sshConfig)
 		if err == nil {
 			log.Printf("Successfully reconnected to SSH at %s", sshAddress)
 			p.sshClient = newClient
 			return p.sshClient, nil
 		}
+
 		log.Printf("Failed to reconnect SSH: %v. Retrying in 5 seconds...", err)
 		select {
 		case <-ctx.Done():
@@ -178,10 +315,10 @@ func (p *ProxyServer) reconnectSSH(ctx context.Context) (*ssh.Client, error) {
 	}
 }
 
-// monitorSSHConnection periodically sends keepalive requests and reconnects if necessary.
 func (p *ProxyServer) monitorSSHConnection() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
+
 	for {
 		select {
 		case <-p.ctx.Done():
@@ -195,7 +332,6 @@ func (p *ProxyServer) monitorSSHConnection() {
 					p.sshClient.Close()
 					p.sshClient = nil
 					p.clientLock.Unlock()
-					// Reconnect outside the lock.
 					_, err := p.reconnectSSH(p.ctx)
 					if err != nil {
 						log.Printf("Reconnection attempt failed: %v", err)
@@ -208,17 +344,28 @@ func (p *ProxyServer) monitorSSHConnection() {
 	}
 }
 
-func (s *ProxyServer) Stop() error {
-	if s.cancel != nil {
-		s.cancel()
+func (p *ProxyServer) Stop() error {
+	if p.cancel != nil {
+		p.cancel()
 	}
-	if s.listener != nil {
-		s.listener.Close()
+
+	if p.listener != nil {
+		p.listener.Close()
 	}
-	s.clientLock.Lock()
-	if s.sshClient != nil {
-		s.sshClient.Close()
+
+	if p.httpListener != nil {
+		p.httpListener.Close()
 	}
-	s.clientLock.Unlock()
+
+	if p.httpServer != nil {
+		p.httpServer.Shutdown(context.Background())
+	}
+
+	p.clientLock.Lock()
+	if p.sshClient != nil {
+		p.sshClient.Close()
+	}
+	p.clientLock.Unlock()
+
 	return nil
 }

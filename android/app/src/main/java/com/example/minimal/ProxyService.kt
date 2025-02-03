@@ -23,7 +23,6 @@ class ProxyService : Service(), CoroutineScope {
     private val NOTIFICATION_ID = 1
     private val CHANNEL_ID = "ProxyServiceChannel"
     private val WAKELOCK_TAG = "ProxyService::wakelock"
-
     private var isProxyRunning = false
 
     override fun onCreate() {
@@ -48,6 +47,7 @@ class ProxyService : Service(), CoroutineScope {
                     val port = intent.getStringExtra("port") ?: return START_NOT_STICKY
                     val user = intent.getStringExtra("user") ?: return START_NOT_STICKY
                     val privateKey = intent.getStringExtra("privateKey") ?: return START_NOT_STICKY
+                    val proxyType = intent.getStringExtra("proxyType") ?: "socks5"
 
                     startForeground(NOTIFICATION_ID, createNotification("Starting proxy..."))
 
@@ -62,29 +62,24 @@ class ProxyService : Service(), CoroutineScope {
                                 it.write(privateKey.toByteArray())
                             }
 
-                            // Остановим существующий прокси если он запущен
                             try {
                                 Mobile.stopProxy()
                             } catch (e: Exception) {
-                                // Игнорируем ошибку если прокси не был запущен
                             }
 
-                            // Запускаем новый прокси
                             Mobile.startProxy(
                                 host,
                                 port,
                                 user,
                                 "",
                                 keyFile.absolutePath,
-                                "1081"
+                                "1081",
+                                proxyType
                             )
 
                             isProxyRunning = true
-                            updateNotification("Proxy is running")
-
-                            // Запускаем мониторинг прокси
+                            updateNotification("$proxyType proxy is running")
                             startProxyMonitoring()
-
                         } catch (e: Exception) {
                             updateNotification("Proxy error: ${e.message}")
                             stopSelf()
@@ -105,17 +100,12 @@ class ProxyService : Service(), CoroutineScope {
         launch {
             while (isProxyRunning && isActive) {
                 try {
-                    // Проверяем работу прокси каждые 5 секунд
                     delay(5000)
-
-                    // Здесь можно добавить проверку работоспособности прокси
-                    // Например, пробовать подключиться к localhost:1081
                     val socket = java.net.Socket()
                     try {
                         socket.connect(java.net.InetSocketAddress("127.0.0.1", 1081), 1000)
                         updateNotification("Proxy is running")
                     } catch (e: Exception) {
-                        // Если подключение не удалось, перезапускаем прокси
                         updateNotification("Reconnecting proxy...")
                         throw e
                     } finally {
@@ -124,7 +114,6 @@ class ProxyService : Service(), CoroutineScope {
                         } catch (e: Exception) {}
                     }
                 } catch (e: Exception) {
-                    // Если произошла ошибка, останавливаем сервис
                     stopProxyService()
                     break
                 }
