@@ -21,6 +21,7 @@ func main() {
 	sshPassword := flag.String("password", "", "SSH password (used if key not provided)")
 	keyPath := flag.String("key", "", "Path to SSH private key")
 	localPort := flag.String("lport", "1080", "Local SOCKS5 proxy port (default 1080)")
+	proxyType := flag.String("proxyType", "socks5", "Local SOCKS5 proxy port (default 1080)")
 	flag.Parse()
 
 	config := &proxy.ProxyConfig{
@@ -31,6 +32,7 @@ func main() {
 		KeyPath:     *keyPath,
 		LocalPort:   *localPort,
 		LogPath:     filepath.Join("logs", "proxy.log"),
+		ProxyType:   *proxyType,
 	}
 
 	if config.SSHHost == "" || config.SSHUser == "" || (config.SSHPassword == "" && config.KeyPath == "") {

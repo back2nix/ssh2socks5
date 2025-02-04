@@ -53,10 +53,11 @@ clean:
 	rm -rf $(HOME)/.gradle/caches
 	cd $(ANDROID_DIR) && ./gradlew clean --no-daemon
 
-PARAMS = -lport=1081 \
+PARAMS = -lport=1082 \
          -host=35.193.63.104 \
          -user=bg \
-         -key=/home/bg/Documents/code/backup/.ssh/google-france-key
+         -key=/home/bg/Documents/code/backup/.ssh/google-france-key \
+				 -proxyType=socks5
 
 .PHONY: run
 run: build-go
