@@ -4,12 +4,14 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"ssh2socks5/proxy"
 )
@@ -22,6 +24,7 @@ func main() {
 	keyPath := flag.String("key", "", "Path to SSH private key")
 	localPort := flag.String("lport", "1080", "Local SOCKS5 proxy port (default 1080)")
 	proxyType := flag.String("proxyType", "socks5", "Local SOCKS5 proxy port (default 1080)")
+
 	flag.Parse()
 
 	config := &proxy.ProxyConfig{
@@ -54,9 +57,25 @@ func main() {
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	<-sigChan
 
-	if err := proxyServer.Stop(); err != nil {
-		log.Printf("Error stopping proxy: %v", err)
+	<-sigChan
+	log.Println("Shutting down gracefully...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		if err := proxyServer.Stop(); err != nil {
+			log.Printf("Error stopping proxy: %v", err)
+		}
+		close(done)
+	}()
+
+	select {
+	case <-ctx.Done():
+		log.Println("Shutdown timed out")
+	case <-done:
+		log.Println("Shutdown completed successfully")
 	}
 }

@@ -1,7 +1,9 @@
 package mobile
 
 import (
+	"context"
 	"sync"
+	"time"
 
 	"ssh2socks5/proxy"
 )
@@ -44,10 +46,21 @@ func StopProxy() error {
 	defer proxyLock.Unlock()
 
 	if currentProxy != nil {
-		if err := currentProxy.Stop(); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+
+		done := make(chan error)
+		go func() {
+			done <- currentProxy.Stop()
+		}()
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-done:
+			currentProxy = nil
 			return err
 		}
-		currentProxy = nil
 	}
 	return nil
 }

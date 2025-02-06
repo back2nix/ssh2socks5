@@ -29,6 +29,8 @@ type ProxyServer struct {
 	cancel            context.CancelFunc
 	clientLock        sync.Mutex
 	proxyType         string // "socks5" or "http"
+	wg                sync.WaitGroup
+	shutdownComplete  chan struct{}
 }
 
 type ProxyConfig struct {
@@ -57,8 +59,9 @@ func (c *trackedConn) Close() error {
 
 func NewProxyServer(config *ProxyConfig) (*ProxyServer, error) {
 	return &ProxyServer{
-		config:    config,
-		proxyType: config.ProxyType,
+		config:           config,
+		proxyType:        config.ProxyType,
+		shutdownComplete: make(chan struct{}),
 	}, nil
 }
 
@@ -85,9 +88,10 @@ func (p *ProxyServer) Start() error {
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         30 * time.Second,
 	}
-	p.sshConfig = sshConfig
 
+	p.sshConfig = sshConfig
 	sshAddress := p.config.SSHHost + ":" + p.config.SSHPort
+
 	client, err := ssh.Dial("tcp", sshAddress, sshConfig)
 	if err != nil {
 		return err
@@ -98,10 +102,14 @@ func (p *ProxyServer) Start() error {
 	p.clientLock.Unlock()
 
 	p.ctx, p.cancel = context.WithCancel(context.Background())
-	go p.monitorSSHConnection()
+
+	p.wg.Add(1)
+	go func() {
+		defer p.wg.Done()
+		p.monitorSSHConnection()
+	}()
 
 	listenAddr := "0.0.0.0:" + p.config.LocalPort
-
 	if p.proxyType == "http" {
 		return p.startHTTPProxy(listenAddr)
 	}
@@ -132,20 +140,23 @@ func (p *ProxyServer) startSocksProxy(listenAddr string) error {
 	socksConfig := &socks5.Config{
 		Dial: dialer,
 	}
+
 	socksServer, err := socks5.New(socksConfig)
 	if err != nil {
 		return err
 	}
-	p.socksServer = socksServer
 
+	p.socksServer = socksServer
 	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		return err
 	}
 	p.listener = listener
 
+	p.wg.Add(1)
 	go func() {
-		if err := p.socksServer.Serve(listener); err != nil {
+		defer p.wg.Done()
+		if err := p.socksServer.Serve(listener); err != nil && !isClosedError(err) {
 			log.Printf("SOCKS5 server error: %v", err)
 		}
 	}()
@@ -172,8 +183,10 @@ func (p *ProxyServer) startHTTPProxy(listenAddr string) error {
 	}
 	p.httpServer = server
 
+	p.wg.Add(1)
 	go func() {
-		if err := server.Serve(listener); err != http.ErrServerClosed {
+		defer p.wg.Done()
+		if err := server.Serve(listener); err != nil && !isClosedError(err) {
 			log.Printf("HTTP proxy server error: %v", err)
 		}
 	}()
@@ -255,13 +268,15 @@ func (p *ProxyServer) handleHTTPSConnection(w http.ResponseWriter, r *http.Reque
 
 	clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
 
+	p.wg.Add(2)
 	go func() {
+		defer p.wg.Done()
 		defer clientConn.Close()
 		defer targetConn.Close()
 		io.Copy(targetConn, clientConn)
 	}()
-
 	go func() {
+		defer p.wg.Done()
 		defer clientConn.Close()
 		defer targetConn.Close()
 		io.Copy(clientConn, targetConn)
@@ -367,5 +382,12 @@ func (p *ProxyServer) Stop() error {
 	}
 	p.clientLock.Unlock()
 
+	p.wg.Wait()
+	close(p.shutdownComplete)
+
 	return nil
+}
+
+func isClosedError(err error) bool {
+	return err != nil && (err.Error() == "http: Server closed" || err.Error() == "use of closed network connection")
 }
