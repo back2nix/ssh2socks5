@@ -125,21 +125,29 @@ func (p *ProxyServer) Start() error {
 
 func (p *ProxyServer) startSocksProxy(listenAddr string) error {
 	dialer := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		p.logMessage(fmt.Sprintf("SOCKS5: New connection request to %s:%s", network, addr))
+
 		atomic.AddInt32(&p.activeConnections, 1)
 		client, err := p.getConnectedSSHClient(ctx)
 		if err != nil {
 			atomic.AddInt32(&p.activeConnections, -1)
+			p.logMessage(fmt.Sprintf("SOCKS5: Failed to get SSH client: %v", err))
 			return nil, err
 		}
+
 		conn, err := client.Dial(network, addr)
 		if err != nil {
 			atomic.AddInt32(&p.activeConnections, -1)
+			p.logMessage(fmt.Sprintf("SOCKS5: Failed to dial target %s:%s: %v", network, addr, err))
 			return nil, err
 		}
+
+		p.logMessage(fmt.Sprintf("SOCKS5: Successfully established connection to %s:%s", network, addr))
 		return &trackedConn{
 			Conn: conn,
 			onClose: func() {
 				atomic.AddInt32(&p.activeConnections, -1)
+				p.logMessage(fmt.Sprintf("SOCKS5: Closed connection to %s:%s", network, addr))
 			},
 		}, nil
 	}
@@ -150,16 +158,18 @@ func (p *ProxyServer) startSocksProxy(listenAddr string) error {
 
 	socksServer, err := socks5.New(socksConfig)
 	if err != nil {
+		p.logMessage(fmt.Sprintf("Failed to create SOCKS5 server: %v", err))
 		return err
 	}
 
 	p.socksServer = socksServer
 	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
+		p.logMessage(fmt.Sprintf("Failed to start listener on %s: %v", listenAddr, err))
 		return err
 	}
-	p.listener = listener
 
+	p.listener = listener
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
@@ -203,8 +213,11 @@ func (p *ProxyServer) startHTTPProxy(listenAddr string) error {
 }
 
 func (p *ProxyServer) handleHTTPConnection(w http.ResponseWriter, r *http.Request) {
+	p.logMessage(fmt.Sprintf("Handling HTTP connection to: %s", r.Host))
+
 	client, err := p.getConnectedSSHClient(r.Context())
 	if err != nil {
+		p.logMessage(fmt.Sprintf("Failed to get SSH client for HTTP connection: %v", err))
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
@@ -213,9 +226,11 @@ func (p *ProxyServer) handleHTTPConnection(w http.ResponseWriter, r *http.Reques
 	if r.URL.Port() == "" {
 		targetHost = targetHost + ":80"
 	}
+	p.logMessage(fmt.Sprintf("Dialing target host: %s", targetHost))
 
 	conn, err := client.Dial("tcp", targetHost)
 	if err != nil {
+		p.logMessage(fmt.Sprintf("Failed to dial target host %s: %v", targetHost, err))
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
@@ -223,12 +238,14 @@ func (p *ProxyServer) handleHTTPConnection(w http.ResponseWriter, r *http.Reques
 
 	r.RequestURI = ""
 	if err := r.Write(conn); err != nil {
+		p.logMessage(fmt.Sprintf("Failed to write request to target: %v", err))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	resp, err := http.ReadResponse(bufio.NewReader(conn), r)
 	if err != nil {
+		p.logMessage(fmt.Sprintf("Failed to read response from target: %v", err))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -240,12 +257,21 @@ func (p *ProxyServer) handleHTTPConnection(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+
+	copied, err := io.Copy(w, resp.Body)
+	if err != nil {
+		p.logMessage(fmt.Sprintf("Error copying response body: %v", err))
+	} else {
+		p.logMessage(fmt.Sprintf("Successfully proxied HTTP connection to %s, copied %d bytes", targetHost, copied))
+	}
 }
 
 func (p *ProxyServer) handleHTTPSConnection(w http.ResponseWriter, r *http.Request) {
+	p.logMessage(fmt.Sprintf("Handling HTTPS connection to: %s", r.Host))
+
 	client, err := p.getConnectedSSHClient(r.Context())
 	if err != nil {
+		p.logMessage(fmt.Sprintf("Failed to get SSH client for HTTPS connection: %v", err))
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
@@ -254,39 +280,54 @@ func (p *ProxyServer) handleHTTPSConnection(w http.ResponseWriter, r *http.Reque
 	if r.URL.Port() == "" {
 		targetHost = targetHost + ":443"
 	}
+	p.logMessage(fmt.Sprintf("Dialing target host: %s", targetHost))
 
 	targetConn, err := client.Dial("tcp", targetHost)
 	if err != nil {
+		p.logMessage(fmt.Sprintf("Failed to dial target host %s: %v", targetHost, err))
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
 
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
+		p.logMessage("Failed to hijack connection: hijacking not supported")
 		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
 		return
 	}
 
 	clientConn, _, err := hijacker.Hijack()
 	if err != nil {
+		p.logMessage(fmt.Sprintf("Failed to hijack connection: %v", err))
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
 
 	clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+	p.logMessage(fmt.Sprintf("HTTPS tunnel established to %s", targetHost))
 
 	p.wg.Add(2)
 	go func() {
 		defer p.wg.Done()
 		defer clientConn.Close()
 		defer targetConn.Close()
-		io.Copy(targetConn, clientConn)
+		copied, err := io.Copy(targetConn, clientConn)
+		if err != nil {
+			p.logMessage(fmt.Sprintf("Error in client->target tunnel: %v", err))
+		} else {
+			p.logMessage(fmt.Sprintf("Client->target tunnel closed, copied %d bytes", copied))
+		}
 	}()
 	go func() {
 		defer p.wg.Done()
 		defer clientConn.Close()
 		defer targetConn.Close()
-		io.Copy(clientConn, targetConn)
+		copied, err := io.Copy(clientConn, targetConn)
+		if err != nil {
+			p.logMessage(fmt.Sprintf("Error in target->client tunnel: %v", err))
+		} else {
+			p.logMessage(fmt.Sprintf("Target->client tunnel closed, copied %d bytes", copied))
+		}
 	}()
 }
 
