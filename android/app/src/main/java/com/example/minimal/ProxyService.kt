@@ -1,5 +1,6 @@
 package com.example.minimal
 
+import java.util.concurrent.TimeUnit
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -10,8 +11,10 @@ import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
 import mobile.Mobile
+import okhttp3.*
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import kotlin.coroutines.CoroutineContext
 
 class ProxyService : Service(), CoroutineScope {
@@ -24,6 +27,22 @@ class ProxyService : Service(), CoroutineScope {
     private val CHANNEL_ID = "ProxyServiceChannel"
     private val WAKELOCK_TAG = "ProxyService::wakelock"
     private var isProxyRunning = false
+
+    companion object {
+        const val ACTION_LOG_UPDATE = "com.example.minimal.LOG_UPDATE"
+        const val EXTRA_LOG_MESSAGE = "log_message"
+    }
+
+    private fun appendToLog(message: String) {
+        // Send broadcast to MainActivity
+        val intent = Intent(ACTION_LOG_UPDATE).apply {
+            putExtra(EXTRA_LOG_MESSAGE, message)
+        }
+        sendBroadcast(intent)
+
+        // Also update notification if needed
+        updateNotification(message)
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -80,6 +99,7 @@ class ProxyService : Service(), CoroutineScope {
                             isProxyRunning = true
                             updateNotification("$proxyType proxy is running")
                             startProxyMonitoring()
+                            startLogMonitoring()
                         } catch (e: Exception) {
                             updateNotification("Proxy error: ${e.message}")
                             stopSelf()
@@ -94,6 +114,40 @@ class ProxyService : Service(), CoroutineScope {
             }
         }
         return START_STICKY
+    }
+
+    private fun startLogMonitoring() {
+      launch {
+        try {
+          val client = OkHttpClient.Builder()
+          .readTimeout(0, TimeUnit.SECONDS)
+          .build()
+
+          val request = Request.Builder()
+          .url("http://localhost:1792/logs")  // Используем localhost вместо 127.0.0.1
+          .build()
+
+          client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+              appendToLog("Log monitoring failed: ${e.message}")
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+              response.body?.source()?.let { source ->
+                while (!source.exhausted()) {
+                  val line = source.readUtf8Line() ?: continue
+                  if (line.startsWith("data: ")) {
+                    val logMessage = line.substring(6)
+                    appendToLog(logMessage)
+                  }
+                }
+              }
+            }
+          })
+        } catch (e: Exception) {
+          appendToLog("Failed to start log monitoring: ${e.message}")
+        }
+      }
     }
 
     private fun startProxyMonitoring() {

@@ -1,5 +1,8 @@
 package com.example.minimal
 
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
+import java.util.concurrent.TimeUnit
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.widget.Button
@@ -37,6 +40,15 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_PRIVATE_KEY = "private_key"
         private const val KEY_PROXY_TYPE = "proxy_type"
         private const val KEY_PROXY_RUNNING = "proxy_running"
+    }
+
+    private val logReceiver = object : BroadcastReceiver() {
+      override fun onReceive(context: Context?, intent: Intent?) {
+        if (intent?.action == ProxyService.ACTION_LOG_UPDATE) {
+          val message = intent.getStringExtra(ProxyService.EXTRA_LOG_MESSAGE)
+          message?.let { appendToLog(it) }
+        }
+      }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -95,8 +107,15 @@ class MainActivity : AppCompatActivity() {
         appendToLog("Application started")
 
         if (isProxyRunning) {
-            startProxy()
+          startProxy()
         }
+
+        registerReceiver(logReceiver, IntentFilter(ProxyService.ACTION_LOG_UPDATE))
+    }
+
+    override fun onDestroy() {
+      super.onDestroy()
+      unregisterReceiver(logReceiver)
     }
 
     private fun saveState() {

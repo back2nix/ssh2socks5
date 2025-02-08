@@ -3,8 +3,8 @@ package proxy
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -31,6 +31,9 @@ type ProxyServer struct {
 	proxyType         string // "socks5" or "http"
 	wg                sync.WaitGroup
 	shutdownComplete  chan struct{}
+	logChan           chan string
+	logListener       net.Listener
+	logServer         *http.Server
 }
 
 type ProxyConfig struct {
@@ -66,6 +69,10 @@ func NewProxyServer(config *ProxyConfig) (*ProxyServer, error) {
 }
 
 func (p *ProxyServer) Start() error {
+	if err := p.setupLogging("0.0.0.0:1792"); err != nil {
+		return err
+	}
+
 	var authMethods []ssh.AuthMethod
 	if p.config.SSHPassword != "" {
 		authMethods = append(authMethods, ssh.Password(p.config.SSHPassword))
@@ -157,11 +164,11 @@ func (p *ProxyServer) startSocksProxy(listenAddr string) error {
 	go func() {
 		defer p.wg.Done()
 		if err := p.socksServer.Serve(listener); err != nil && !isClosedError(err) {
-			log.Printf("SOCKS5 server error: %v", err)
+			p.logMessage(fmt.Sprintf("SOCKS5 server error: %v", err))
 		}
 	}()
 
-	log.Printf("SOCKS5 proxy listening on %s", listenAddr)
+	p.logMessage(fmt.Sprintf("SOCKS5 proxy listening on %s", listenAddr))
 	return nil
 }
 
@@ -187,11 +194,11 @@ func (p *ProxyServer) startHTTPProxy(listenAddr string) error {
 	go func() {
 		defer p.wg.Done()
 		if err := server.Serve(listener); err != nil && !isClosedError(err) {
-			log.Printf("HTTP proxy server error: %v", err)
+			p.logMessage(fmt.Sprintf("HTTP proxy server error: %v", err))
 		}
 	}()
 
-	log.Printf("HTTP proxy listening on %s", listenAddr)
+	p.logMessage(fmt.Sprintf("HTTP proxy listening on %s", listenAddr))
 	return nil
 }
 
@@ -293,7 +300,7 @@ func (p *ProxyServer) getConnectedSSHClient(ctx context.Context) (*ssh.Client, e
 
 	_, _, err := p.sshClient.SendRequest("keepalive@openssh.com", true, nil)
 	if err != nil {
-		log.Printf("SSH connection appears dead: %v. Reconnecting...", err)
+		p.logMessage(fmt.Sprintf("SSH connection appears dead: %v. Reconnecting...", err))
 		p.sshClient.Close()
 		p.sshClient = nil
 		return p.reconnectSSH(ctx)
@@ -316,12 +323,12 @@ func (p *ProxyServer) reconnectSSH(ctx context.Context) (*ssh.Client, error) {
 
 		newClient, err = ssh.Dial("tcp", sshAddress, p.sshConfig)
 		if err == nil {
-			log.Printf("Successfully reconnected to SSH at %s", sshAddress)
+			p.logMessage(fmt.Sprintf("Successfully reconnected to SSH at %s", sshAddress))
 			p.sshClient = newClient
 			return p.sshClient, nil
 		}
 
-		log.Printf("Failed to reconnect SSH: %v. Retrying in 5 seconds...", err)
+		p.logMessage(fmt.Sprintf("Failed to reconnect SSH: %v. Retrying in 5 seconds...", err))
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -343,13 +350,13 @@ func (p *ProxyServer) monitorSSHConnection() {
 			if p.sshClient != nil {
 				_, _, err := p.sshClient.SendRequest("keepalive@openssh.com", true, nil)
 				if err != nil {
-					log.Printf("SSH keepalive failed: %v. Attempting to reconnect...", err)
+					p.logMessage(fmt.Sprintf("SSH keepalive failed: %v. Attempting to reconnect...", err))
 					p.sshClient.Close()
 					p.sshClient = nil
 					p.clientLock.Unlock()
 					_, err := p.reconnectSSH(p.ctx)
 					if err != nil {
-						log.Printf("Reconnection attempt failed: %v", err)
+						p.logMessage(fmt.Sprintf("Reconnection attempt failed: %v", err))
 					}
 					continue
 				}
@@ -372,8 +379,16 @@ func (p *ProxyServer) Stop() error {
 		p.httpListener.Close()
 	}
 
+	if p.logListener != nil {
+		p.logListener.Close()
+	}
+
 	if p.httpServer != nil {
 		p.httpServer.Shutdown(context.Background())
+	}
+
+	if p.logServer != nil {
+		p.logServer.Shutdown(context.Background())
 	}
 
 	p.clientLock.Lock()
@@ -390,4 +405,62 @@ func (p *ProxyServer) Stop() error {
 
 func isClosedError(err error) bool {
 	return err != nil && (err.Error() == "http: Server closed" || err.Error() == "use of closed network connection")
+}
+
+func (p *ProxyServer) setupLogging(listenAddr string) error {
+	logListener, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		return err
+	}
+	p.logListener = logListener
+	p.logChan = make(chan string, 100)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/logs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
+			return
+		}
+
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case msg := <-p.logChan:
+				_, err := fmt.Fprintf(w, "data: %s\n\n", msg)
+				if err != nil {
+					return
+				}
+				flusher.Flush()
+			}
+		}
+	})
+
+	p.logServer = &http.Server{
+		Handler: mux,
+	}
+
+	p.wg.Add(1)
+	go func() {
+		defer p.wg.Done()
+		if err := p.logServer.Serve(logListener); err != nil && !isClosedError(err) {
+			p.logMessage(fmt.Sprintf("Log server error: %v", err))
+		}
+	}()
+
+	return nil
+}
+
+func (p *ProxyServer) logMessage(msg string) {
+	select {
+	case p.logChan <- msg:
+	default:
+		// Channel is full, drop the message
+	}
 }
