@@ -6,6 +6,16 @@ GO_FILES := $(shell find . -name '*.go')
 ANDROID_DIR := android
 CMD_DIR := cmd/ssh2socks5
 
+# Извлечение информации из SSH config (улучшенный вариант)
+SSH_HOST_NAME := google-seoul
+SSH_CONFIG_PATH := $(HOME)/.ssh/config
+SSH_HOST := $(shell grep -A10 "^Host $(SSH_HOST_NAME)$$" $(SSH_CONFIG_PATH) | grep "HostName" | head -n1 | awk '{print $$2}')
+SSH_USER := $(shell grep -A10 "^Host $(SSH_HOST_NAME)$$" $(SSH_CONFIG_PATH) | grep "User" | head -n1 | awk '{print $$2}')
+SSH_KEY := $(shell grep -A10 "^Host $(SSH_HOST_NAME)$$" $(SSH_CONFIG_PATH) | grep "IdentityFile" | head -n1 | awk '{print $$2}')
+
+# Раскрываем путь к ключу, если он содержит ~
+SSH_KEY_EXPANDED := $(shell echo $(SSH_KEY) | sed 's:^~:$(HOME):')
+
 .DEFAULT_GOAL := help
 
 .PHONY: help
@@ -17,6 +27,14 @@ help:
 	@echo "  test          - Run Go tests"
 	@echo "  clean         - Clean build artifacts"
 	@echo "  run           - Run the Go SSH proxy"
+	@echo "  ssh-info      - Display extracted SSH connection info"
+
+.PHONY: ssh-info
+ssh-info:
+	@echo "SSH Host: $(SSH_HOST)"
+	@echo "SSH User: $(SSH_USER)"
+	@echo "SSH Key:  $(SSH_KEY)"
+	@echo "SSH Key (expanded): $(SSH_KEY_EXPANDED)"
 
 .PHONY: build-go
 build-go:
@@ -53,14 +71,19 @@ clean:
 	rm -rf $(HOME)/.gradle/caches
 	cd $(ANDROID_DIR) && ./gradlew clean --no-daemon
 
+# Определение параметров с правильными значениями
 PARAMS = -lport=1082 \
-         -host=35.193.63.104 \
-         -user=bg \
-         -key=/home/bg/Documents/code/backup/.ssh/google-france-key \
-				 -proxyType=socks5
+         -host=$(SSH_HOST) \
+         -user=$(SSH_USER) \
+         -key=$(SSH_KEY_EXPANDED) \
+         -proxyType=socks5
 
 .PHONY: run
 run: build-go
+	@echo "Running with parameters:"
+	@echo "  Host: $(SSH_HOST)"
+	@echo "  User: $(SSH_USER)"
+	@echo "  Key:  $(SSH_KEY_EXPANDED)"
 	./bin/$(BINARY_NAME) $(PARAMS)
 
 nix-run:
