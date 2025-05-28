@@ -541,26 +541,27 @@ func (p *ProxyServer) getConnectedSSHClient(ctx context.Context) (*ssh.Client, e
 }
 
 func (p *ProxyServer) reconnectSSH(ctx context.Context) (*ssh.Client, error) {
-	sshAddress := p.config.SSHHost + ":" + p.config.SSHPort
-	var newClient *ssh.Client
-	var err error
+  sshAddress := p.config.SSHHost + ":" + p.config.SSHPort
+  var newClient *ssh.Client
+  var err error
 
-	maxRetries := 3
-	for retry := 0; retry < maxRetries; retry++ {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
+  maxRetries := 3
+  for retry := 0; retry < maxRetries; retry++ {
+    select {
+    case <-ctx.Done():
+      return nil, ctx.Err()
+    default:
+  }
 
-		if retry > 0 {
-			backoff := time.Duration(1<<uint(retry-1)) * time.Second
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(backoff):
-			}
-		}
+    if retry > 0 {
+      backoff := time.Duration(2<<uint(retry)) * time.Second // Увеличить backoff
+      p.logMessage(fmt.Sprintf("Waiting %v before retry %d", backoff, retry+1))
+      select {
+      case <-ctx.Done():
+        return nil, ctx.Err()
+      case <-time.After(backoff):
+    }
+    }
 
 		newClient, err = ssh.Dial("tcp", sshAddress, p.sshConfig)
 		if err == nil {
@@ -578,7 +579,7 @@ func (p *ProxyServer) reconnectSSH(ctx context.Context) (*ssh.Client, error) {
 }
 
 func (p *ProxyServer) monitorSSHConnection() {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
 	for {

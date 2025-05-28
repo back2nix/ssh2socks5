@@ -69,6 +69,21 @@ nix run github:back2nix/ssh2socks5#ssh2socks5 -- -lport=1081 -host=35.193.63.104
 nix run .#ssh2socks5 -- -lport=1081 -host=35.193.63.104 -user=bg -key=/home/bg/Documents/code/backup/.ssh/google-france-key
 ```
 
+### Решение - увеличить лимиты в SSH:
+bashsudo nano /etc/ssh/sshd_config
+Найдите и измените/добавьте:
+```bash
+MaxStartups 50:30:100
+MaxSessions 100
+MaxAuthTries 200
+```
+Перезапустите SSH:
+```bash
+sudo systemctl restart ssh
+```
+
+
+
 ## Usage
 
 ### Desktop
@@ -88,3 +103,5 @@ Note: The app itself doesn't create a system-wide VPN. To route all device traff
 ## License
 
 MIT
+
+
