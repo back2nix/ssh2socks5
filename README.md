@@ -70,16 +70,34 @@ nix run .#ssh2socks5 -- -lport=1081 -host=35.193.63.104 -user=bg -key=/home/bg/D
 ```
 
 ### Решение - увеличить лимиты в SSH:
-bashsudo nano /etc/ssh/sshd_config
+
+```bash
+sudo nano /etc/ssh/sshd_config
+```
+
 Найдите и измените/добавьте:
+
 ```bash
 MaxStartups 50:30:100
 MaxSessions 100
 MaxAuthTries 200
 ```
+
 Перезапустите SSH:
+
 ```bash
 sudo systemctl restart ssh
+```
+
+```
+Host hetzener_usa_d1
+    HostName 5.161.216.208
+    User root
+    IdentityFile /home/bg/.ssh/id_rsa
+    ControlMaster auto
+    ControlPath ~/.ssh/control-%r@%h:%p
+    ControlPersist 600
+
 ```
 
 
