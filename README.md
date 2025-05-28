@@ -72,15 +72,26 @@ nix run .#ssh2socks5 -- -lport=1081 -host=35.193.63.104 -user=bg -key=/home/bg/D
 ### Решение - увеличить лимиты в SSH:
 
 ```bash
-sudo nano /etc/ssh/sshd_config
+sudo vim /etc/ssh/sshd_config
 ```
 
 Найдите и измените/добавьте:
 
 ```bash
-MaxStartups 50:30:100
-MaxSessions 100
-MaxAuthTries 200
+ClientAliveInterval 60
+ClientAliveCountMax 2
+TCPKeepAlive yes
+
+# Для большего количества подключений
+MaxStartups 100:30:200
+MaxSessions 500
+
+# Увеличиваем время на аутентификацию, чтобы меньше банило
+LoginGraceTime 300
+MaxAuthTries 300
+
+# Отключаем DNS lookup для ускорения подключений
+UseDNS no
 ```
 
 Перезапустите SSH:

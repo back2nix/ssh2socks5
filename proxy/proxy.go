@@ -33,11 +33,14 @@ type ProxyServer struct {
 	proxyType         string
 	wg                sync.WaitGroup
 	shutdownComplete  chan struct{}
-	logChan           chan string
+	// logChan           chan string
 	logListener       net.Listener
 	logServer         *http.Server
 	connectionPool    chan *ssh.Client
 	maxConnections    int32
+  sshPool        *sync.Pool
+  maxSSHClients  int32
+  currentClients int32
 }
 
 type ProxyConfig struct {
@@ -98,13 +101,27 @@ func (l *filteredLogger) Printf(format string, args ...interface{}) {
 }
 
 func NewProxyServer(config *ProxyConfig) (*ProxyServer, error) {
-	return &ProxyServer{
-		config:           config,
-		proxyType:        config.ProxyType,
-		shutdownComplete: make(chan struct{}),
-		connectionPool:   make(chan *ssh.Client, 5),
-		maxConnections:   100,
-	}, nil
+    p := &ProxyServer{
+        config:           config,
+        proxyType:        config.ProxyType,
+        shutdownComplete: make(chan struct{}),
+        maxSSHClients:    5, // Ограничение
+        maxConnections:   100,
+    }
+
+    // Используем sync.Pool для переиспользования соединений
+    p.sshPool = &sync.Pool{
+        New: func() interface{} {
+            client, err := p.createNewSSHClient()
+            if err != nil {
+                return nil
+            }
+            atomic.AddInt32(&p.currentClients, 1)
+            return client
+        },
+    }
+
+    return p, nil
 }
 
 func (p *ProxyServer) Start() error {
@@ -198,20 +215,21 @@ func (p *ProxyServer) createNewSSHClient() (*ssh.Client, error) {
 func (p *ProxyServer) startSocksProxy(listenAddr string) error {
 	dialer := func(ctx context.Context, network, addr string) (net.Conn, error) {
 		if atomic.LoadInt32(&p.activeConnections) >= p.maxConnections {
+			p.logMessage(fmt.Sprintf("Connection limit reached (%d/%d)", atomic.LoadInt32(&p.activeConnections), p.maxConnections))
 			return nil, fmt.Errorf("connection limit reached")
 		}
 
-		p.logMessage(fmt.Sprintf("SOCKS5: New connection request to %s:%s", network, addr))
+		p.logMessage(fmt.Sprintf("SOCKS5: New connection request to %s://%s", network, addr))
 
 		atomic.AddInt32(&p.activeConnections, 1)
 		client, err := p.getConnectedSSHClient(ctx)
 		if err != nil {
 			atomic.AddInt32(&p.activeConnections, -1)
-			if !isNetworkError(err) {
-				p.logMessage(fmt.Sprintf("SOCKS5: Failed to get SSH client: %v", err))
-			}
+			p.logMessage(fmt.Sprintf("SOCKS5: Failed to get SSH client: %v", err))
 			return nil, err
 		}
+
+		p.logMessage(fmt.Sprintf("SOCKS5: Got SSH client, dialing %s://%s", network, addr))
 
 		dialCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
@@ -230,17 +248,16 @@ func (p *ProxyServer) startSocksProxy(listenAddr string) error {
 		select {
 		case <-dialCtx.Done():
 			atomic.AddInt32(&p.activeConnections, -1)
+			p.logMessage(fmt.Sprintf("SOCKS5: Dial timeout to %s://%s", network, addr))
 			return nil, fmt.Errorf("dial timeout to %s:%s", network, addr)
 		case result := <-dialChan:
 			if result.err != nil {
 				atomic.AddInt32(&p.activeConnections, -1)
-				if !isNetworkError(result.err) {
-					p.logMessage(fmt.Sprintf("SOCKS5: Failed to dial target %s:%s: %v", network, addr, result.err))
-				}
+				p.logMessage(fmt.Sprintf("SOCKS5: Failed to dial target %s://%s: %v", network, addr, result.err))
 				return nil, result.err
 			}
 
-			p.logMessage(fmt.Sprintf("SOCKS5: Successfully established connection to %s:%s", network, addr))
+			p.logMessage(fmt.Sprintf("SOCKS5: Successfully established connection to %s://%s", network, addr))
 
 			wrappedConn := &timeoutConn{
 				Conn:         result.conn,
@@ -252,18 +269,16 @@ func (p *ProxyServer) startSocksProxy(listenAddr string) error {
 				Conn: wrappedConn,
 				onClose: func() {
 					atomic.AddInt32(&p.activeConnections, -1)
-					p.logMessage(fmt.Sprintf("SOCKS5: Closed connection to %s:%s", network, addr))
+					p.logMessage(fmt.Sprintf("SOCKS5: Closed connection to %s://%s (active: %d)", network, addr, atomic.LoadInt32(&p.activeConnections)))
 				},
 			}, nil
 		}
 	}
 
-	// Создаём фильтрованный логгер
-	filteredLog := log.New(&filteredLogWriter{p}, "", log.LstdFlags)
-
+	// Создаём конфигурацию SOCKS5 с диалером
 	socksConfig := &socks5.Config{
-		Dial:   dialer,
-		Logger: filteredLog, // Используем стандартный log.Logger
+		Dial: dialer,
+		// Убираем Logger чтобы избежать дублирования логов
 	}
 
 	socksServer, err := socks5.New(socksConfig)
@@ -283,12 +298,12 @@ func (p *ProxyServer) startSocksProxy(listenAddr string) error {
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
+		p.logMessage(fmt.Sprintf("SOCKS5 proxy listening on %s", listenAddr))
 		if err := p.socksServer.Serve(listener); err != nil && !isClosedError(err) {
 			p.logMessage(fmt.Sprintf("SOCKS5 server error: %v", err))
 		}
 	}()
 
-	p.logMessage(fmt.Sprintf("SOCKS5 proxy listening on %s", listenAddr))
 	return nil
 }
 
@@ -510,34 +525,73 @@ func (p *ProxyServer) handleHTTPSConnection(w http.ResponseWriter, r *http.Reque
 }
 
 func (p *ProxyServer) getConnectedSSHClient(ctx context.Context) (*ssh.Client, error) {
+	p.logMessage("Getting SSH client...")
+
+	// Проверяем пул соединений
 	select {
 	case client := <-p.connectionPool:
-		_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
-		if err == nil {
-			return client, nil
+		if client != nil {
+			_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
+			if err == nil {
+				p.logMessage("Using pooled SSH client")
+				return client, nil
+			}
+			p.logMessage(fmt.Sprintf("Pooled SSH client is dead: %v", err))
+			client.Close()
 		}
-		client.Close()
 	default:
+		p.logMessage("No pooled SSH clients available")
 	}
 
 	p.clientLock.Lock()
 	defer p.clientLock.Unlock()
 
 	if p.sshClient == nil {
+		p.logMessage("Creating new SSH connection...")
 		return p.reconnectSSH(ctx)
 	}
 
 	_, _, err := p.sshClient.SendRequest("keepalive@openssh.com", true, nil)
 	if err != nil {
-		if !isNetworkError(err) {
-			p.logMessage(fmt.Sprintf("SSH connection appears dead: %v. Reconnecting...", err))
-		}
+		p.logMessage(fmt.Sprintf("Main SSH connection appears dead: %v. Reconnecting...", err))
 		p.sshClient.Close()
 		p.sshClient = nil
 		return p.reconnectSSH(ctx)
 	}
 
+	p.logMessage("Using main SSH client")
 	return p.sshClient, nil
+}
+
+func (p *ProxyServer) returnSSHClient(client *ssh.Client) {
+    if client == nil {
+        return
+    }
+
+    // Проверяем что соединение ещё живое
+    _, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
+    if err != nil {
+        client.Close()
+        atomic.AddInt32(&p.currentClients, -1)
+        return
+    }
+
+    p.sshPool.Put(client)
+}
+
+func (p *ProxyServer) createNewSSHClientWithLimit() (*ssh.Client, error) {
+    if atomic.LoadInt32(&p.currentClients) >= p.maxSSHClients {
+        return nil, fmt.Errorf("SSH connection limit reached")
+    }
+
+    sshAddress := p.config.SSHHost + ":" + p.config.SSHPort
+    client, err := ssh.Dial("tcp", sshAddress, p.sshConfig)
+    if err != nil {
+        return nil, err
+    }
+
+    atomic.AddInt32(&p.currentClients, 1)
+    return client, nil
 }
 
 func (p *ProxyServer) reconnectSSH(ctx context.Context) (*ssh.Client, error) {
@@ -614,9 +668,14 @@ func (p *ProxyServer) Stop() error {
 		p.cancel()
 	}
 
-	close(p.connectionPool)
-	for client := range p.connectionPool {
-		client.Close()
+	// Исправляем закрытие каналов
+	if p.connectionPool != nil {
+		close(p.connectionPool)
+		for client := range p.connectionPool {
+			if client != nil {
+				client.Close()
+			}
+		}
 	}
 
 	if p.listener != nil {
@@ -642,11 +701,16 @@ func (p *ProxyServer) Stop() error {
 	p.clientLock.Lock()
 	if p.sshClient != nil {
 		p.sshClient.Close()
+		p.sshClient = nil
 	}
 	p.clientLock.Unlock()
 
 	p.wg.Wait()
-	close(p.shutdownComplete)
+
+	// Проверяем что канал не nil перед закрытием
+	if p.shutdownComplete != nil {
+		close(p.shutdownComplete)
+	}
 
 	return nil
 }
@@ -657,7 +721,7 @@ func (p *ProxyServer) setupLogging(listenAddr string) error {
 		return err
 	}
 	p.logListener = logListener
-	p.logChan = make(chan string, 100)
+	// p.logChan = make(chan string, 100)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/logs", func(w http.ResponseWriter, r *http.Request) {
@@ -666,22 +730,22 @@ func (p *ProxyServer) setupLogging(listenAddr string) error {
 		w.Header().Set("Connection", "keep-alive")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
-			return
-		}
+		// flusher, ok := w.(http.Flusher)
+		// if !ok {
+		// 	http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
+		// 	return
+		// }
 
 		for {
 			select {
 			case <-r.Context().Done():
 				return
-			case msg := <-p.logChan:
-				_, err := fmt.Fprintf(w, "data: %s\n\n", msg)
-				if err != nil {
-					return
-				}
-				flusher.Flush()
+			// case msg := <-p.logChan:
+				// _, err := fmt.Fprintf(w, "data: %s\n\n", msg)
+				// if err != nil {
+				// 	return
+				// }
+				// flusher.Flush()
 			}
 		}
 	})
@@ -702,11 +766,17 @@ func (p *ProxyServer) setupLogging(listenAddr string) error {
 }
 
 func (p *ProxyServer) logMessage(msg string) {
-	select {
-	case p.logChan <- msg:
-	default:
-		// Channel is full, drop the message
-	}
+	// Консольный вывод для отладки
+	log.Printf("[PROXY] %s", msg)
+
+	// // HTTP логирование (если канал доступен)
+	// if p.logChan != nil {
+	// 	select {
+	// 	case p.logChan <- msg:
+	// 	default:
+	// 		// Channel is full, drop the message
+	// 	}
+	// }
 }
 
 // Вспомогательные функции
@@ -736,3 +806,5 @@ func isClosedError(err error) bool {
 	return err != nil && (err.Error() == "http: Server closed" ||
 		strings.Contains(err.Error(), "use of closed network connection"))
 }
+
+
